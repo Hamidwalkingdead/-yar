@@ -1,6 +1,7 @@
 import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
 import { RequireAuth } from "@/components/RequireAuth";
+import { AppShell } from "@/components/AppShell";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
@@ -12,7 +13,12 @@ import "./index.css";
 // Lazy load route components for better code splitting
 const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
-const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
+const TripsPage = lazy(() => import("./pages/Trips.tsx"));
+const TripCreatePage = lazy(() => import("./pages/TripCreate.tsx"));
+const TripDetailPage = lazy(() => import("./pages/TripDetail.tsx"));
+const WalletPage = lazy(() => import("./pages/Wallet.tsx"));
+const ProfilePage = lazy(() => import("./pages/Profile.tsx"));
+const AdminPage = lazy(() => import("./pages/Admin.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -128,10 +134,17 @@ createRoot(document.getElementById("root")!).render(
                 path="/dashboard"
                 element={
                   <RequireAuth>
-                    <Dashboard />
+                    <AppShell />
                   </RequireAuth>
                 }
-              />
+              >
+                <Route index element={<TripsPage />} />
+                <Route path="new" element={<TripCreatePage />} />
+                <Route path="trips/:tripId" element={<TripDetailPage />} />
+                <Route path="wallet" element={<WalletPage />} />
+                <Route path="profile" element={<ProfilePage />} />
+                <Route path="admin" element={<AdminPage />} />
+              </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

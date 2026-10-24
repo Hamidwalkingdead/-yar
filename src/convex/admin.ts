@@ -387,7 +387,7 @@ export const reviewDocument = mutation({
           : status === "rejected"
             ? `مدرک شما رد شد.${notes ? ` دلیل: ${notes}` : ""}`
             : "مدرک شما در انتظار بررسی است.",
-      link: "/app/profile",
+      link: "/dashboard/profile",
     });
     await audit(ctx, {
       actorId: admin._id,
@@ -415,7 +415,7 @@ export const setDriverStatus = mutation({
       kind: "driver_status_changed",
       title: "تغییر وضعیت حساب رانندگی",
       body: `وضعیت شما به «${status === "approved" ? "تأییدشده" : status === "rejected" ? "ردشده" : "در انتظار بررسی"}» تغییر کرد.`,
-      link: "/app/profile",
+      link: "/dashboard/profile",
     });
     await audit(ctx, {
       actorId: admin._id,
@@ -494,7 +494,7 @@ export const cancelTripAdmin = mutation({
         kind: "trip_cancelled",
         title: "سفر توسط مدیر لغو شد",
         body: `سفر «${trip.origin.label} به ${trip.destination.label}» لغو شد. دلیل: ${reason}`,
-        link: `/app/trips/${trip._id}`,
+        link: `/dashboard/trips/${trip._id}`,
       });
     }
     await audit(ctx, {
@@ -547,7 +547,7 @@ export const reviewWithdrawal = mutation({
         decision === "confirmed"
           ? `درخواست برداشت ${Math.abs(txn.amount).toLocaleString("fa-IR")} تومان تأیید شد.`
           : `درخواست برداشت شما رد شد.${note ? ` دلیل: ${note}` : ""}`,
-      link: "/app/wallet",
+      link: "/dashboard/wallet",
     });
     await audit(ctx, {
       actorId: admin._id,
@@ -598,7 +598,7 @@ export const recordDeposit = mutation({
       kind: "wallet_deposit",
       title: "واریز به کیف پول",
       body: `${amount.toLocaleString("fa-IR")} تومان به کیف پول شما واریز شد.`,
-      link: "/app/wallet",
+      link: "/dashboard/wallet",
     });
     await audit(ctx, {
       actorId: admin._id,
@@ -676,7 +676,7 @@ export const approveSettlement = mutation({
         decision === "approved"
           ? `درخواست تسویه ${settlement.amount.toLocaleString("fa-IR")} تومان تأیید شد.`
           : "درخواست تسویه شما رد شد.",
-      link: "/app/wallet",
+      link: "/dashboard/wallet",
     });
     await audit(ctx, {
       actorId: admin._id,
@@ -732,7 +732,7 @@ export const markSettlementPaid = mutation({
       kind: "settlement_paid",
       title: "تسویه‌حساب انجام شد",
       body: `${settlement.amount.toLocaleString("fa-IR")} تومان کمیسیون تسویه شد.`,
-      link: "/app/wallet",
+      link: "/dashboard/wallet",
     });
     await audit(ctx, {
       actorId: admin._id,

@@ -125,7 +125,7 @@ export const requestWithdrawal = mutation({
         kind: "withdrawal_requested",
         title: "درخواست برداشت جدید",
         body: `${user.name ?? user.phone ?? "راننده"} مبلغ ${amount.toLocaleString("fa-IR")} تومان درخواست برداشت کرده است.`,
-        link: "/app/admin/wallets",
+        link: "/dashboard/admin?tab=wallets",
       });
     }
     await audit(ctx, {
@@ -292,7 +292,7 @@ export const requestSettlement = mutation({
         kind: "settlement_requested",
         title: "درخواست تسویه جدید",
         body: `${user.name ?? user.phone ?? "راننده"} مبلغ ${wallet.commissionUnpaid.toLocaleString("fa-IR")} تومان تسویه درخواست کرده است.`,
-        link: "/app/admin/settlements",
+        link: "/dashboard/admin?tab=settlements",
       });
     }
     await audit(ctx, {

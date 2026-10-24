@@ -1,3 +1,4 @@
+import { BrandMark, Wordmark } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,10 +14,11 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp";
-
+import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/hooks/use-auth";
-import logo from "@/assets/logo.svg";
-import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
+import { toFaDigits } from "@/lib/fa";
+import { useQuery } from "convex/react";
+import { ArrowLeft, Loader2, Smartphone, TriangleAlert } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -24,14 +26,19 @@ interface AuthProps {
   redirectAfterAuth?: string;
 }
 
-function resolveRedirectAfterAuth(
-  returnTo: string | null,
-  fallback = "/dashboard",
-) {
+function resolveRedirectAfterAuth(returnTo: string | null, fallback = "/dashboard") {
   if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
     return returnTo;
   }
   return fallback;
+}
+
+/** فرمت شماره ایران برای نمایش: ۰۹۱۲ ۳۴۵ ۶۷۸۹ */
+function formatFaPhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 7) return `${digits.slice(0, 4)} ${digits.slice(4)}`;
+  return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 11)}`;
 }
 
 function Auth({ redirectAfterAuth }: AuthProps = {}) {
@@ -42,171 +49,223 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     searchParams.get("returnTo"),
     redirectAfterAuth,
   );
-  const [step, setStep] = useState<"signIn" | { email: string }>("signIn");
+  const presetRole = searchParams.get("role") === "driver" ? "driver" : "passenger";
+
+  const [step, setStep] = useState<"phone" | { phone: string }>("phone");
+  const [role, setRole] = useState<"passenger" | "driver">(presetRole);
+  const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // وضعیت سرویس پیامک برای شماره‌ای که کد برایش ارسال شده
+  const otpPhone = typeof step === "object" ? step.phone : null;
+  const smsStatus = useQuery(
+    api.sms.status,
+    otpPhone ? { phone: otpPhone } : "skip",
+  );
+  const otpInfo =
+    otpPhone && smsStatus?.code
+      ? `سرویس پیامک متصل نیست — کد آزمایشی: ${toFaDigits(smsStatus.code)}`
+      : null;
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
       navigate(redirect);
     }
   }, [authLoading, isAuthenticated, navigate, redirect]);
-  const handleEmailSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+
+  const normalized = phone.replace(/\D/g, "");
+  const phoneValid = /^09\d{9}$/.test(normalized);
+
+  const sendOtp = async (target: string) => {
     setIsLoading(true);
     setError(null);
     try {
-      const formData = new FormData(event.currentTarget);
-      await signIn("email-otp", formData);
-      setStep({ email: formData.get("email") as string });
-      setIsLoading(false);
-    } catch (error) {
-      console.error("Email sign-in error:", error);
+      const formData = new FormData();
+      formData.set("phone", target);
+      await signIn("phone-otp", formData);
+      setStep({ phone: target });
+    } catch (err) {
+      console.error("phone sign-in error:", err);
       setError(
-        error instanceof Error
-          ? error.message
-          : "Failed to send verification code. Please try again.",
+        err instanceof Error
+          ? err.message
+          : "ارسال کد پیامکی ممکن نشد. دوباره تلاش کنید.",
       );
+    } finally {
       setIsLoading(false);
     }
+  };
+
+  const handlePhoneSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!phoneValid || isLoading) return;
+    void sendOtp(normalized);
+  };
+
+  const handleResend = () => {
+    if (typeof step !== "object" || isLoading) return;
+    void sendOtp(step.phone);
   };
 
   const handleOtpSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (otp.length !== 6 || isLoading || typeof step !== "object") return;
     setIsLoading(true);
     setError(null);
     try {
-      const formData = new FormData(event.currentTarget);
-      await signIn("email-otp", formData);
-
-      console.log("signed in");
-
+      const formData = new FormData();
+      formData.set("phone", step.phone);
+      formData.set("code", otp);
+      await signIn("phone-otp", formData);
       navigate(redirect);
-    } catch (error) {
-      console.error("OTP verification error:", error);
-
-      setError("The verification code you entered is incorrect.");
-      setIsLoading(false);
-
+    } catch (err) {
+      console.error("OTP verification error:", err);
+      setError("کد واردشده نادرست یا منقضی شده است.");
       setOtp("");
-    }
-  };
-
-  const handleGuestLogin = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      console.log("Attempting anonymous sign in...");
-      await signIn("anonymous");
-      console.log("Anonymous sign in successful");
-      navigate(redirect);
-    } catch (error) {
-      console.error("Guest login error:", error);
-      console.error("Error details:", JSON.stringify(error, null, 2));
-      setError(`Failed to sign in as guest: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="border-b border-border/60">
+        <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-4 sm:px-6">
+          <Wordmark onClick={() => navigate("/")} />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="cursor-pointer gap-1.5 text-muted-foreground"
+            onClick={() => navigate("/")}
+          >
+            بازگشت به صفحه اصلی
+            <ArrowLeft className="size-4" />
+          </Button>
+        </div>
+      </header>
 
-      
-      {/* Auth Content */}
-      <div className="flex-1 flex items-center justify-center">
-        <div className="flex items-center justify-center h-full flex-col">
-        <Card className="min-w-[350px] pb-0 border shadow-md">
-          {step === "signIn" ? (
+      <main className="flex flex-1 items-center justify-center px-4 py-10">
+        <Card className="w-full max-w-md shadow-lg">
+          {step === "phone" ? (
             <>
               <CardHeader className="text-center">
-              <div className="flex justify-center">
-                    <img
-                      src={logo}
-                      alt="Lock Icon"
-                      width={64}
-                      height={64}
-                      className="rounded-lg mb-4 mt-4 cursor-pointer"
-                      onClick={() => navigate("/")}
-                    />
-                  </div>
-                <CardTitle className="text-xl">Get Started</CardTitle>
-                <CardDescription>
-                  Enter your email to log in or sign up
+                <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-brand-teal text-white">
+                  <Smartphone className="size-6" />
+                </div>
+                <CardTitle className="mt-4 text-xl font-black tracking-tight">
+                  ورود و ثبت‌نام با شماره موبایل
+                </CardTitle>
+                <CardDescription className="leading-7">
+                  شماره‌تان را وارد کنید، کد شش‌رقمی پیامکی برایتان ارسال می‌شود.
                 </CardDescription>
               </CardHeader>
-              <form onSubmit={handleEmailSubmit}>
-                <CardContent>
-                  
-                  <div className="relative flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        name="email"
-                        placeholder="name@example.com"
-                        type="email"
-                        className="pl-9"
-                        disabled={isLoading}
-                        required
-                      />
+              <form onSubmit={handlePhoneSubmit}>
+                <CardContent className="space-y-5">
+                  <fieldset className="space-y-2">
+                    <legend className="mb-2 text-sm font-semibold">نقش شما</legend>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(
+                        [
+                          { id: "passenger", label: "مسافر", hint: "جست‌وجو و درخواست سفر" },
+                          { id: "driver", label: "راننده", hint: "ثبت سفر و پذیرش" },
+                        ] as const
+                      ).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          disabled={isLoading}
+                          onClick={() => setRole(item.id)}
+                          className={`cursor-pointer rounded-xl border p-3 text-right transition-colors ${
+                            role === item.id
+                              ? "border-brand-teal bg-brand-teal-soft"
+                              : "border-border bg-card hover:border-primary/40"
+                          }`}
+                        >
+                          <span className="block text-sm font-bold">{item.label}</span>
+                          <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                            {item.hint}
+                          </span>
+                        </button>
+                      ))}
                     </div>
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      size="icon"
-                      disabled={isLoading}
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ArrowRight className="h-4 w-4" />
-                      )}
-                    </Button>
+                    <p className="hint-fa">
+                      نقش پس از اولین ورود یک‌بار ثبت می‌شود؛ راننده پس از تأیید
+                      مدیر می‌تواند سفر ثبت کند.
+                    </p>
+                  </fieldset>
+
+                  <div className="space-y-2">
+                    <label htmlFor="phone" className="text-sm font-semibold">
+                      شماره موبایل
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1" dir="ltr">
+                        <Input
+                          id="phone"
+                          name="phone"
+                          inputMode="numeric"
+                          autoComplete="tel"
+                          placeholder="09123456789"
+                          className="text-left"
+                          value={formatFaPhone(phone)}
+                          onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))}
+                          disabled={isLoading}
+                          required
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        className="cursor-pointer gap-1.5"
+                        disabled={isLoading || !phoneValid}
+                      >
+                        {isLoading ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <>
+                            ارسال کد
+                            <ArrowLeft className="size-4" />
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      شماره باید با ۰۹ شروع شود و ۱۱ رقم باشد ({toFaDigits("09123456789")}).
+                    </p>
                   </div>
+
                   {error && (
-                    <p className="mt-2 text-sm text-red-500">{error}</p>
+                    <p className="alert-error">
+                      <TriangleAlert className="size-4 shrink-0" />
+                      {error}
+                    </p>
                   )}
-                  
-                  <div className="mt-4">
-                    <div className="relative">
-                      <div className="absolute inset-0 flex items-center">
-                        <span className="w-full border-t" />
-                      </div>
-                      <div className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-background px-2 text-muted-foreground">
-                          Or
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full mt-4"
-                      onClick={handleGuestLogin}
-                      disabled={isLoading}
-                    >
-                      <UserX className="mr-2 h-4 w-4" />
-                      Continue as Guest
-                    </Button>
-                  </div>
                 </CardContent>
               </form>
             </>
           ) : (
             <>
-              <CardHeader className="text-center mt-4">
-                <CardTitle>Check your email</CardTitle>
-                <CardDescription>
-                  We've sent a code to {step.email}
+              <CardHeader className="text-center">
+                <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-brand-teal-soft text-brand-teal-deep">
+                  <Smartphone className="size-6" />
+                </div>
+                <CardTitle className="mt-4 text-xl font-black tracking-tight">
+                  کد تأیید را وارد کنید
+                </CardTitle>
+                <CardDescription className="leading-7">
+                  کد شش‌رقمی به شماره{" "}
+                  <span className="font-semibold text-foreground" dir="ltr">
+                    {toFaDigits(step.phone)}
+                  </span>{" "}
+                  پیامک شد.
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleOtpSubmit}>
-                <CardContent className="pb-4">
-                  <input type="hidden" name="email" value={step.email} />
+                <CardContent className="space-y-4">
+                  <input type="hidden" name="phone" value={step.phone} />
                   <input type="hidden" name="code" value={otp} />
 
-                  <div className="flex justify-center">
+                  <div className="flex justify-center" dir="ltr">
                     <InputOTP
                       value={otp}
                       onChange={setOtp}
@@ -214,11 +273,8 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       disabled={isLoading}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && otp.length === 6 && !isLoading) {
-                          // Find the closest form and submit it
                           const form = (e.target as HTMLElement).closest("form");
-                          if (form) {
-                            form.requestSubmit();
-                          }
+                          if (form) form.requestSubmit();
                         }
                       }}
                     >
@@ -229,68 +285,66 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       </InputOTPGroup>
                     </InputOTP>
                   </div>
+
+                  {otpInfo && <p className="alert-warn">{otpInfo}</p>}
                   {error && (
-                    <p className="mt-2 text-sm text-red-500 text-center">
+                    <p className="alert-error">
+                      <TriangleAlert className="size-4 shrink-0" />
                       {error}
                     </p>
                   )}
-                  <p className="text-sm text-muted-foreground text-center mt-4">
-                    Didn't receive a code?{" "}
-                    <Button
-                      variant="link"
-                      className="p-0 h-auto"
-                      onClick={() => setStep("signIn")}
-                    >
-                      Try again
-                    </Button>
-                  </p>
                 </CardContent>
                 <CardFooter className="flex-col gap-2">
                   <Button
                     type="submit"
-                    className="w-full"
+                    className="w-full cursor-pointer gap-1.5"
                     disabled={isLoading || otp.length !== 6}
                   >
                     {isLoading ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Verifying...
+                        <Loader2 className="size-4 animate-spin" />
+                        در حال تأیید…
                       </>
                     ) : (
                       <>
-                        Verify code
-                        <ArrowRight className="ml-2 h-4 w-4" />
+                        تأیید و ورود
+                        <ArrowLeft className="size-4" />
                       </>
                     )}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setStep("signIn")}
-                    disabled={isLoading}
-                    className="w-full"
-                  >
-                    Use different email
-                  </Button>
+                  <div className="flex w-full items-center justify-between text-xs">
+                    <button
+                      type="button"
+                      className="cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                      onClick={() => {
+                        setStep("phone");
+                        setOtp("");
+                        setError(null);
+                      }}
+                      disabled={isLoading}
+                    >
+                      تغییر شماره
+                    </button>
+                    <button
+                      type="button"
+                      className="cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                      onClick={handleResend}
+                      disabled={isLoading}
+                    >
+                      ارسال دوباره کد
+                    </button>
+                  </div>
                 </CardFooter>
               </form>
             </>
           )}
 
-          <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
-            Secured by{" "}
-            <a
-              href="https://freebuff.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:text-primary transition-colors"
-            >
-              freebuff.com
-            </a>
+          <div className="flex items-center justify-center gap-2 rounded-b-xl border-t border-border/60 bg-muted/50 px-6 py-3 text-[11px] text-muted-foreground">
+            <BrandMark className="size-3.5" />
+            سفریار — احراز هویت با شماره موبایل
           </div>
         </Card>
-        </div>
-      </div>
+      </main>
     </div>
   );
 }

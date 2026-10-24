@@ -183,7 +183,7 @@ export const submitDocument = mutation({
         kind: "document_submitted",
         title: "مدرک جدید برای بررسی",
         body: `${user.name ?? user.phone ?? "راننده"} مدرکی برای بررسی ثبت کرده است.`,
-        link: "/app/admin/documents",
+        link: "/dashboard/admin?tab=documents",
       });
     }
     await audit(ctx, {

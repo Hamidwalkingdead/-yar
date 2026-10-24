@@ -552,7 +552,7 @@ export const accept = mutation({
       kind: "trip_accepted",
       title: "درخواست سفر شما پذیرفته شد",
       body: `راننده‌ای سفر «${trip.origin.label} به ${trip.destination.label}» را پذیرفت.`,
-      link: `/app/trips/${trip._id}`,
+      link: `/dashboard/trips/${trip._id}`,
     });
     await audit(ctx, {
       actorId: user._id,
@@ -614,7 +614,7 @@ export const requestSeat = mutation({
       kind: "new_request",
       title: "درخواست جدید",
       body: `مسافری برای سفر «${trip.origin.label} به ${trip.destination.label}» درخواست ثبت کرد.`,
-      link: `/app/trips/${trip._id}`,
+      link: `/dashboard/trips/${trip._id}`,
     });
 
     return { ok: true as const };
@@ -650,7 +650,7 @@ export const respond = mutation({
         kind: "request_rejected",
         title: "درخواست شما رد شد",
         body: `درخواست شما برای سفر «${trip.origin.label} به ${trip.destination.label}» پذیرفته نشد.`,
-        link: `/app/trips/${trip._id}`,
+        link: `/dashboard/trips/${trip._id}`,
       });
       await audit(ctx, {
         actorId: user._id,
@@ -686,7 +686,7 @@ export const respond = mutation({
       kind: "request_accepted",
       title: "درخواست شما پذیرفته شد",
       body: `درخواست شما برای سفر «${trip.origin.label} به ${trip.destination.label}» پذیرفته شد.`,
-      link: `/app/trips/${trip._id}`,
+      link: `/dashboard/trips/${trip._id}`,
     });
     await audit(ctx, {
       actorId: user._id,
@@ -719,7 +719,7 @@ export const cancelRequest = mutation({
         kind: "request_cancelled",
         title: "درخواستی لغو شد",
         body: "مسافری از درخواست خود انصراف داد.",
-        link: `/app/trips/${trip._id}`,
+        link: `/dashboard/trips/${trip._id}`,
       });
     }
     return { ok: true as const };
@@ -762,7 +762,7 @@ export const cancelTrip = mutation({
             kind: "trip_cancelled",
             title: "سفر لغو شد",
             body: `سفر «${trip.origin.label} به ${trip.destination.label}» لغوشده اعلام شد.`,
-            link: `/app/trips/${trip._id}`,
+            link: `/dashboard/trips/${trip._id}`,
           });
         }
       }
@@ -774,7 +774,7 @@ export const cancelTrip = mutation({
         kind: "trip_cancelled",
         title: "سفر لغو شد",
         body: `سفری که پذیرفته بودید توسط طرف مقابل لغو شد.${reason ? ` دلیل: ${reason}` : ""}`,
-        link: `/app/trips/${trip._id}`,
+        link: `/dashboard/trips/${trip._id}`,
       });
     }
 
@@ -810,7 +810,7 @@ export const markArrived = mutation({
       kind: "driver_arrived",
       title: "راننده به مبدأ رسید",
       body: `راننده سفر «${trip.origin.label} به ${trip.destination.label}» به مبدأ رسید.`,
-      link: `/app/trips/${trip._id}`,
+      link: `/dashboard/trips/${trip._id}`,
     });
     await audit(ctx, {
       actorId: user._id,
@@ -838,7 +838,7 @@ export const startTrip = mutation({
       kind: "trip_started",
       title: "سفر آغاز شد",
       body: `سفر «${trip.origin.label} به ${trip.destination.label}» در حال انجام است.`,
-      link: `/app/trips/${trip._id}`,
+      link: `/dashboard/trips/${trip._id}`,
     });
     await audit(ctx, {
       actorId: user._id,
@@ -1001,7 +1001,7 @@ export const completeTrip = mutation({
           kind: "commission_due",
           title: "ثبت کمیسیون",
           body: `${chargedToDriver.toLocaleString("fa-IR")} تومان کمیسیون برای این سفر ثبت شد.`,
-          link: "/app/wallet",
+          link: "/dashboard/wallet",
         });
       } else if (chargedToDriver > 0) {
         await notify(ctx, {
@@ -1009,7 +1009,7 @@ export const completeTrip = mutation({
           kind: "commission_paid",
           title: "کمیسیون کسر شد",
           body: `${chargedToDriver.toLocaleString("fa-IR")} تومان کمیسیون از کیف پول شما کسر شد.`,
-          link: "/app/wallet",
+          link: "/dashboard/wallet",
         });
       }
     }
@@ -1021,7 +1021,7 @@ export const completeTrip = mutation({
         kind: "trip_completed",
         title: "پایان سفر",
         body: `سفر «${trip.origin.label} به ${trip.destination.label}» پایان یافت. رسید شما در صفحه سفر موجود است.`,
-        link: `/app/trips/${trip._id}`,
+        link: `/dashboard/trips/${trip._id}`,
       });
     }
 

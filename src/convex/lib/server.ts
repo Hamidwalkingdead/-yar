@@ -60,8 +60,6 @@ export const DEFAULT_SETTINGS: SettingsLike = {
   updatedAt: 0,
 };
 
-export type SettingsLike = typeof DEFAULT_SETTINGS;
-
 /** خواندن تنظیمات؛ اگر هنوز ساخته نشده باشد مقادیر پیش‌فرض برمی‌گردد. */
 export async function loadSettings(ctx: AnyCtx): Promise<SettingsLike> {
   const row = await ctx.db
