@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/AppShell";
+import { JalaliDateField } from "@/components/JalaliDateTime";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -46,6 +47,8 @@ export default function TripsPage() {
   const [maxPrice, setMaxPrice] = useState("");
   const [minDistance, setMinDistance] = useState("");
   const [maxDistance, setMaxDistance] = useState("");
+  const [departureFrom, setDepartureFrom] = useState<number | null>(null);
+  const [departureTo, setDepartureTo] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const trips = useQuery(api.trips.list, {
@@ -56,11 +59,22 @@ export default function TripsPage() {
     maxPrice: maxPrice ? Number(maxPrice) * 1000 : undefined,
     minDistance: minDistance ? Number(minDistance) : undefined,
     maxDistance: maxDistance ? Number(maxDistance) : undefined,
+    departureFrom: departureFrom ?? undefined,
+    // پایان بازه: آغاز روز بعد (فیلتر سرور «کوچک‌تر از» است)
+    departureTo: departureTo !== null ? departureTo + 86_400_000 : undefined,
   });
   const accept = useMutation(api.trips.accept);
   const requestSeat = useMutation(api.trips.requestSeat);
 
-  const hasFilters = Boolean(minPrice || maxPrice || minDistance || maxDistance || newOnly);
+  const hasFilters = Boolean(
+    minPrice ||
+      maxPrice ||
+      minDistance ||
+      maxDistance ||
+      newOnly ||
+      departureFrom !== null ||
+      departureTo !== null,
+  );
 
   const rows = trips?.trips ?? [];
   const counts = useMemo(
@@ -153,7 +167,7 @@ export default function TripsPage() {
             onClick={() => setShowFilters((v) => !v)}
             className="cursor-pointer rounded-lg border border-border/70 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
           >
-            {showFilters ? "بستن فیلترها" : "فیلتر قیمت و مسافت"}
+            {showFilters ? "بستن فیلترها" : "فیلتر تاریخ، قیمت و مسافت"}
             {hasFilters && <span className="mr-1 text-brand-teal">•</span>}
           </button>
         </div>
@@ -202,6 +216,16 @@ export default function TripsPage() {
                 onChange={(e) => setMaxDistance(e.target.value)}
               />
             </div>
+            <JalaliDateField
+              label="از تاریخ حرکت (شمسی)"
+              value={departureFrom}
+              onChange={setDepartureFrom}
+            />
+            <JalaliDateField
+              label="تا تاریخ حرکت (شمسی)"
+              value={departureTo}
+              onChange={setDepartureTo}
+            />
             <div className="sm:col-span-2">
               <Button
                 variant="outline"
@@ -213,6 +237,8 @@ export default function TripsPage() {
                   setMinDistance("");
                   setMaxDistance("");
                   setNewOnly(false);
+                  setDepartureFrom(null);
+                  setDepartureTo(null);
                 }}
               >
                 حذف همه فیلترها
@@ -308,7 +334,7 @@ export default function TripsPage() {
                         <span>{faKm(trip.distanceKm)}</span>
                         <span className="inline-flex items-center gap-1">
                           <UsersRound className="size-3.5" />
-                          {faDigits(`${trip.seatsBooked}/${trip.seats}`)} صندلی
+                          {faDigits(trip.seatsBooked)} از {faDigits(trip.seats)} مسافر
                         </span>
                       </div>
                     </div>
@@ -346,7 +372,7 @@ export default function TripsPage() {
                             ? "در حال انجام…"
                             : trip.canAcceptTrip
                               ? "پذیرش سفر"
-                              : "درخواست صندلی"}
+                              : "درخواست سفر"}
                         </Button>
                       </div>
                     </div>

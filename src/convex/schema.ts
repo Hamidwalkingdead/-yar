@@ -154,6 +154,16 @@ const schema = defineSchema(
       baseRatePerKm: v.number(),
       surchargePerKm: v.number(),
       ratePerKm: v.number(),
+      /** ریز نرخ در لحظهٔ ثبت: نرخ پایه و هر افزایش شرایط (شب/باران/برف/کوهستان) */
+      breakdown: v.optional(
+        v.array(
+          v.object({
+            condition: v.string(),
+            label: v.string(),
+            amountPerKm: v.number(),
+          }),
+        ),
+      ),
       priceTotal: v.number(),
       /** قیمت هر مسافر در صورت تقسیم هزینه بین صندلی‌ها */
       pricePerPassenger: v.number(),

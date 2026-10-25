@@ -29,10 +29,10 @@ export const create = action({
 
     const seats = Math.floor(args.seats);
     if (!Number.isFinite(seats) || seats < 1 || seats > 8) {
-      throw new Error("تعداد صندلی باید بین ۱ تا ۸ باشد.");
+      throw new Error("تعداد مسافران باید بین ۱ تا ۸ باشد.");
     }
     if (args.ownerRole === "passenger" && seats !== 1) {
-      throw new Error("درخواست سفر مسافر فقط برای یک صندلی ثبت می‌شود.");
+      throw new Error("درخواست سفر مسافر برای یک نفر ثبت می‌شود.");
     }
     if (args.departureAt < Date.now() - 60_000) {
       throw new Error("زمان حرکت نمی‌تواند در گذشته باشد.");

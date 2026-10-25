@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Calculator,
   Clock,
   LocateFixed,
@@ -27,9 +28,9 @@ import {
   Search,
   TriangleAlert,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 
 type Place = { label: string; lat: number; lng: number };
 
@@ -321,12 +322,22 @@ export default function TripCreatePage() {
     return Math.floor(target / 300_000) * 300_000;
   });
   const [picking, setPicking] = useState<"origin" | "destination" | null>(null);
-  const [seats, setSeats] = useState(isDriver ? 2 : 1);
   const [note, setNote] = useState("");
   const [quote, setQuote] = useState<QuoteResult | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const quoteSeq = useRef(0);
+
+  // ظرفیت واقعی خودروی راننده — سقف تعداد مسافران از همین‌جا می‌آید
+  const profile = useQuery(api.profile.mine);
+  const vehicleCapacity = isDriver ? profile?.vehicle?.capacity ?? null : null;
+  const maxPassengers = vehicleCapacity ? Math.min(8, vehicleCapacity) : 8;
+  const [seats, setSeats] = useState(isDriver ? 2 : 1);
+
+  useEffect(() => {
+    setSeats((current) => Math.max(1, Math.min(maxPassengers, current)));
+  }, [maxPassengers]);
 
   const canQuote = !!origin && !!destination;
 
@@ -350,7 +361,8 @@ export default function TripCreatePage() {
   };
 
   const calcQuote = async () => {
-    if (!origin || !destination || quoting) return;
+    if (!origin || !destination) return;
+    const seq = ++quoteSeq.current;
     setQuoting(true);
     setQuoteError(null);
     try {
@@ -360,6 +372,7 @@ export default function TripCreatePage() {
         departureAt,
         seats: Math.max(1, seats),
       });
+      if (seq !== quoteSeq.current) return; // پاسخ کهنه از درخواست قبلی
       if (res.error || !res.quote) {
         setQuote(null);
         setQuoteError(res.error ?? "محاسبه مسیر ممکن نشد.");
@@ -367,14 +380,27 @@ export default function TripCreatePage() {
         setQuote(res.quote);
       }
     } catch (error) {
+      if (seq !== quoteSeq.current) return;
       setQuote(null);
       setQuoteError(
         error instanceof Error ? error.message : "محاسبه قیمت ممکن نشد؛ دوباره تلاش کنید.",
       );
     } finally {
-      setQuoting(false);
+      if (seq === quoteSeq.current) setQuoting(false);
     }
   };
+
+  // محاسبهٔ خودکار کرایه پس از انتخاب مبدأ/مقصد یا تغییر زمان حرکت و مسافران
+  useEffect(() => {
+    if (!origin || !destination) {
+      setQuote(null);
+      setQuoteError(null);
+      return;
+    }
+    const timer = setTimeout(() => void calcQuote(), 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [origin, destination, departureAt, seats]);
 
   const submit = async () => {
     if (!origin || !destination || !quote || submitting) return;
@@ -438,6 +464,26 @@ export default function TripCreatePage() {
             }}
           />
 
+          {/* جابه‌جایی مبدأ و مقصد */}
+          <div className="flex justify-center">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="cursor-pointer gap-1.5 text-muted-foreground"
+              onClick={() => {
+                setOrigin(destination);
+                setDestination(origin);
+                setPicking(null);
+                setQuote(null);
+              }}
+              disabled={!origin && !destination}
+            >
+              <ArrowRightLeft className="size-4" />
+              جابه‌جایی مبدأ و مقصد
+            </Button>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <JalaliDateTime
@@ -450,22 +496,28 @@ export default function TripCreatePage() {
               />
             </div>
             <div>
-              <label className="label-fa">
-                {isDriver ? "تعداد صندلی‌های قابل ارائه" : "تعداد صندلی"}
-              </label>
+              <label className="label-fa">تعداد مسافران</label>
               <input
                 type="number"
                 min={1}
-                max={8}
+                max={maxPassengers}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={seats}
                 disabled={!isDriver}
                 onChange={(e) => {
-                  setSeats(Math.max(1, Math.min(8, Number(e.target.value) || 1)));
+                  setSeats(Math.max(1, Math.min(maxPassengers, Number(e.target.value) || 1)));
                   setQuote(null);
                 }}
               />
-              {!isDriver && <p className="hint-fa">درخواست مسافر برای یک صندلی ثبت می‌شود.</p>}
+              {isDriver ? (
+                <p className="hint-fa">
+                  {vehicleCapacity
+                    ? `ظرفیت قابل استفادهٔ خودروی شما: ${faDigits(String(vehicleCapacity))} نفر`
+                    : `حداکثر ${faDigits(String(maxPassengers))} نفر؛ پس از ثبت خودرو، ظرفیت آن رعایت می‌شود.`}
+                </p>
+              ) : (
+                <p className="hint-fa">درخواست مسافر برای یک نفر ثبت می‌شود.</p>
+              )}
             </div>
           </div>
 
@@ -494,12 +546,18 @@ export default function TripCreatePage() {
             ) : (
               <>
                 <Calculator className="size-4" />
-                {quote ? "به‌روزرسانی قیمت" : "محاسبه مسافت و قیمت"}
+                {quote ? "به‌روزرسانی قیمت و شرایط" : "محاسبه مسافت و قیمت"}
               </>
             )}
           </Button>
+          {canQuote && !quote && !quoting && (
+            <p className="hint-fa">در حال دریافت مسیر واقعی جاده و محاسبهٔ کرایه…</p>
+          )}
           {!canQuote && (
-            <p className="hint-fa">برای محاسبه قیمت، ابتدا مبدأ و مقصد را انتخاب کنید.</p>
+            <p className="hint-fa">
+              پس از انتخاب مبدأ و مقصد، مسافت از مسیر واقعی جاده و کرایه به‌صورت خودکار
+              محاسبه می‌شود؛ نیازی به ورود دستی مسافت نیست.
+            </p>
           )}
           {quoteError && <p className="alert-error">{quoteError}</p>}
         </div>

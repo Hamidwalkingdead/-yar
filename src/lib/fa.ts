@@ -29,9 +29,17 @@ export function toFaDigits(value: string): string {
   return value.replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 }
 
+/**
+ * تاریخ شمسی با ترتیب «سال/ماه/روز» مانند «۱۴۰۴/۰۸/۰۳».
+ * تقویم locale فارسی، شمسی است؛ فقط قالب خروجی این‌جا تعیین می‌شود.
+ */
 export function faDate(
   ts: number,
-  options: Intl.DateTimeFormatOptions = { dateStyle: "medium" },
+  options: Intl.DateTimeFormatOptions = {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  },
   timezone = DEFAULT_TIMEZONE,
 ): string {
   return new Intl.DateTimeFormat("fa-IR", { ...options, timeZone: timezone }).format(
@@ -39,16 +47,18 @@ export function faDate(
   );
 }
 
+/** ساعت حرکت به‌صورت ۲۴ ساعته مانند «۱۸:۰۵» */
 export function faTime(ts: number, timezone = DEFAULT_TIMEZONE): string {
   return new Intl.DateTimeFormat("fa-IR", {
     hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
     timeZone: timezone,
   }).format(new Date(ts));
 }
 
 export function faDateTime(ts: number, timezone = DEFAULT_TIMEZONE): string {
-  return `${faDate(ts, { dateStyle: "medium" }, timezone)} ساعت ${faTime(ts, timezone)}`;
+  return `${faDate(ts, undefined, timezone)} ساعت ${faTime(ts, timezone)}`;
 }
 
 export function faWeekday(ts: number, timezone = DEFAULT_TIMEZONE): string {

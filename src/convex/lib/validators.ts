@@ -35,6 +35,14 @@ export const quotePayloadValidator = v.object({
   ratePerKm: v.number(),
   priceTotal: v.number(),
   pricePerPassenger: v.number(),
+  /** ریز نرخ: نرخ پایه + هر افزایش شرایط، جداگانه و به ترتیب اعمال‌شده */
+  breakdown: v.array(
+    v.object({
+      condition: v.string(),
+      label: v.string(),
+      amountPerKm: v.number(),
+    }),
+  ),
   commissionPercent: v.number(),
   commissionFixed: v.number(),
   commissionAmount: v.number(),
@@ -46,7 +54,7 @@ export const quotePayloadValidator = v.object({
 });
 
 export type QuotePayload = {
-  [K in keyof Omit<QuoteResult, "breakdown" | "weather" | "elevation" | "warnings">]: QuoteResult[K];
+  [K in keyof Omit<QuoteResult, "weather" | "elevation" | "warnings">]: QuoteResult[K];
 };
 
 export function toQuotePayload(quote: QuoteResult): QuotePayload {
@@ -62,6 +70,7 @@ export function toQuotePayload(quote: QuoteResult): QuotePayload {
     ratePerKm: quote.ratePerKm,
     priceTotal: quote.priceTotal,
     pricePerPassenger: quote.pricePerPassenger,
+    breakdown: quote.breakdown,
     commissionPercent: quote.commissionPercent,
     commissionFixed: quote.commissionFixed,
     commissionAmount: quote.commissionAmount,

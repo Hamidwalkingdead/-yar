@@ -67,6 +67,9 @@ export const list = query({
     minDistance: v.optional(v.number()),
     maxDistance: v.optional(v.number()),
     newOnly: v.optional(v.boolean()),
+    /** بازهٔ تاریخ حرکت (شمسی در رابط کاربری) — پایان بازه، آغاز روز بعد است */
+    departureFrom: v.optional(v.number()),
+    departureTo: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -137,7 +140,18 @@ export const list = query({
           row.trip.distanceKm >= minDistance &&
           row.trip.distanceKm <= maxDistance,
       )
-      .filter((row) => (args.newOnly ? now - row.trip.createdAt < newWindowMs : true));
+      .filter((row) =>
+        args.newOnly ? now - row.trip.createdAt < newWindowMs : true,
+      )
+      .filter((row) => {
+        if (args.departureFrom !== undefined && row.trip.departureAt < args.departureFrom) {
+          return false;
+        }
+        if (args.departureTo !== undefined && row.trip.departureAt >= args.departureTo) {
+          return false;
+        }
+        return true;
+      });
 
     const sort = args.sort ?? "time";
     rows.sort((a, b) => {
@@ -422,7 +436,7 @@ export const insert = internalMutation({
         .first();
       if (vehicle && args.seats > vehicle.capacity) {
         throw new Error(
-          `ظرفیت خودرو (${vehicle.capacity} صندلی) نقض نمی‌شود؛ تعداد انتخابی ${args.seats} است.`,
+          `ظرفیت قابل استفادهٔ خودروی شما ${vehicle.capacity} نفر است؛ نمی‌توانید ${args.seats} مسافر ثبت کنید.`,
         );
       }
       const blocked = await driverBlockReason(ctx, user._id, settings);
@@ -443,6 +457,7 @@ export const insert = internalMutation({
       baseRatePerKm: args.quote.baseRatePerKm,
       surchargePerKm: args.quote.surchargePerKm,
       ratePerKm: args.quote.ratePerKm,
+      breakdown: args.quote.breakdown,
       priceTotal: args.quote.priceTotal,
       pricePerPassenger: args.quote.pricePerPassenger,
       seats: args.seats,

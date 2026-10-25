@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { faDate, faDigits, faTime, faWeekday } from "@/lib/fa";
 import {
   JALALI_MONTHS,
@@ -144,6 +145,106 @@ export function JalaliDateTime({
       <p className="hint-fa">
         {faWeekday(value)} {faDate(value)} — ساعت {faTime(value)} (شمسی، منطقه زمانی تهران)
       </p>
+    </div>
+  );
+}
+
+/**
+ * انتخاب‌گر تاریخ شمسی بدون ساعت — برای فیلترها.
+ * مقدار خالی یعنی «بدون محدودیت»؛ مقدار انتخاب‌شده ابتدای همان روز (وقت تهران) است.
+ */
+export function JalaliDateField({
+  value,
+  onChange,
+  label,
+  className,
+}: {
+  value: number | null;
+  onChange: (timestamp: number | null) => void;
+  label: string;
+  className?: string;
+}) {
+  const today = jalaliFromTimestamp(Date.now());
+  const parts = value === null ? null : jalaliFromTimestamp(value);
+
+  const years: number[] = [];
+  for (let y = today.year - 1; y <= today.year + 3; y++) years.push(y);
+
+  const selectClass =
+    "h-8 cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+  const update = (patch: Partial<JalaliParts>) => {
+    const base = parts ?? today;
+    const next: JalaliParts = { ...base, ...patch, hour: 0, minute: 0 };
+    const maxDay = jalaliMonthLength(next.year, next.month);
+    if (next.day > maxDay) next.day = maxDay;
+    onChange(timestampFromJalali(next));
+  };
+
+  return (
+    <div className={className}>
+      <label className="label-fa">{label}</label>
+      {parts === null ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 cursor-pointer text-xs"
+          onClick={() => onChange(timestampFromJalali({ ...today, hour: 0, minute: 0 }))}
+        >
+          انتخاب تاریخ
+        </Button>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <select
+            aria-label={`${label} — روز`}
+            dir="rtl"
+            className={selectClass}
+            value={parts.day}
+            onChange={(e) => update({ day: Number(e.target.value) })}
+          >
+            {Array.from({ length: jalaliMonthLength(parts.year, parts.month) }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {faDigits(i + 1)}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={`${label} — ماه`}
+            dir="rtl"
+            className={selectClass}
+            value={parts.month}
+            onChange={(e) => update({ month: Number(e.target.value) })}
+          >
+            {JALALI_MONTHS.map((name, i) => (
+              <option key={name} value={i + 1}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={`${label} — سال`}
+            dir="rtl"
+            className={selectClass}
+            value={parts.year}
+            onChange={(e) => update({ year: Number(e.target.value) })}
+          >
+            {years.map((y) => (
+              <option key={y} value={y}>
+                {faDigits(y)}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            aria-label="حذف فیلتر تاریخ"
+            className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => onChange(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

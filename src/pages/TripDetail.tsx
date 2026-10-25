@@ -172,9 +172,9 @@ export default function TripDetailPage() {
                 <span className="text-left font-semibold">
                   {faDigits(String(Math.round(trip.durationMin)))} دقیقه
                 </span>
-                <span className="text-muted-foreground">صندلی‌ها</span>
+                <span className="text-muted-foreground">مسافران</span>
                 <span className="text-left font-semibold">
-                  {faDigits(`${trip.seatsBooked}/${trip.seats}`)}
+                  {faDigits(`${trip.seatsBooked}/${trip.seats}`)} نفر
                 </span>
               </div>
               {trip.conditions.length > 0 && (
@@ -205,16 +205,43 @@ export default function TripDetailPage() {
           </h3>
           <ul className="mt-3 space-y-2 text-sm">
             <li className="flex justify-between border-b border-border/60 pb-2">
-              <span className="text-muted-foreground">نرخ پایه هر کیلومتر</span>
-              <span>{toman(trip.baseRatePerKm)}</span>
+              <span className="text-muted-foreground">مسافت واقعی جاده</span>
+              <span className="font-semibold">{faKm(trip.distanceKm)}</span>
             </li>
-            <li className="flex justify-between border-b border-border/60 pb-2">
-              <span className="text-muted-foreground">افزایش شرایط (هر کیلومتر)</span>
-              <span>{toman(trip.surchargePerKm)}</span>
-            </li>
+
+            {(trip.breakdown ?? []).map((line, i) => (
+              <li
+                key={`${line.condition}-${i}`}
+                className="flex justify-between border-b border-border/60 pb-2"
+              >
+                <span className="text-muted-foreground">{line.label}</span>
+                <span>{toman(line.amountPerKm)} در هر کیلومتر</span>
+              </li>
+            ))}
+            {/* سفرهای قدیمی‌تر ممکن است ریز نرخ ذخیره‌شده نداشته باشند */}
+            {!trip.breakdown?.length && (
+              <li className="flex justify-between border-b border-border/60 pb-2">
+                <span className="text-muted-foreground">نرخ پایه هر کیلومتر</span>
+                <span>{toman(trip.baseRatePerKm)}</span>
+              </li>
+            )}
+            {trip.surchargePerKm > 0 && (
+              <li className="flex justify-between border-b border-border/60 pb-2">
+                <span className="text-muted-foreground">مجموع افزایش شرایط (هر کیلومتر)</span>
+                <span className="font-semibold text-brand-saffron-deep">
+                  {toman(trip.surchargePerKm)}
+                </span>
+              </li>
+            )}
             <li className="flex justify-between border-b border-border/60 pb-2">
               <span className="text-muted-foreground">نرخ نهایی هر کیلومتر</span>
               <span className="font-semibold">{toman(trip.ratePerKm)}</span>
+            </li>
+            <li className="flex justify-between rounded-lg bg-muted/60 px-2 py-2 text-xs">
+              <span className="text-muted-foreground">
+                {faKm(trip.distanceKm)} × {toman(trip.ratePerKm)}
+              </span>
+              <span className="font-semibold">{toman(trip.priceTotal)}</span>
             </li>
             <li className="flex justify-between font-bold">
               <span>قیمت کل</span>
@@ -227,6 +254,10 @@ export default function TripDetailPage() {
               </li>
             )}
           </ul>
+          <p className="hint-fa">
+            قیمت در لحظهٔ ثبت سفر و فقط بر اساس مسیر واقعی جاده و قوانین نرخ محاسبه شده است؛
+            هیچ مقداری دستی وارد نمی‌شود.
+          </p>
         </div>
 
         <div className="trip-row">
@@ -400,7 +431,7 @@ export default function TripDetailPage() {
               disabled={busy !== null}
               onClick={() => void run("request", () => requestSeat({ tripId: id }), "درخواست شما ثبت شد.")}
             >
-              درخواست صندلی
+              درخواست سفر
             </Button>
           )
         )}
