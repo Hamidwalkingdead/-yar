@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { reconcileWallet } from "./lib/ledger";
 import {
   audit,
   ensureWallet,
@@ -742,5 +743,150 @@ export const markSettlementPaid = mutation({
       summary: `پرداخت تسویه ${settlement.amount.toLocaleString("fa-IR")} تومان (${fromWallet ? "از کیف پول" : "واریز مستقیم"})`,
     });
     return { ok: true as const };
+  },
+});
+
+/** ───── اطلاعات حساب مقصد کمیسیون — فقط در دسترس مدیر ───── */
+
+/**
+ * خواندن اطلاعات حساب مقصد دریافت کمیسیون.
+ * فقط مدیر می‌خواند؛ هیچ کوئری عمومی یا مربوط به راننده این سند را برنمی‌گرداند.
+ */
+export const payoutAccount = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    return await ctx.db
+      .query("payoutAccounts")
+      .withIndex("by_key", (q) => q.eq("key", "platform"))
+      .first();
+  },
+});
+
+/** ذخیره اطلاعات حساب مقصد (فقط مدیر، بدون ثبت ارقام در سوابق) */
+export const savePayoutAccount = mutation({
+  args: {
+    bankName: v.optional(v.string()),
+    accountHolder: v.optional(v.string()),
+    cardNumber: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const admin = await requireAdmin(ctx);
+    const clean = (value: string | undefined) => value?.trim() || undefined;
+    const now = Date.now();
+    const payload = {
+      key: "platform",
+      bankName: clean(args.bankName),
+      accountHolder: clean(args.accountHolder),
+      cardNumber: clean(args.cardNumber),
+      note: clean(args.note),
+      updatedAt: now,
+      updatedBy: admin._id,
+    };
+    const row = await ctx.db
+      .query("payoutAccounts")
+      .withIndex("by_key", (q) => q.eq("key", "platform"))
+      .first();
+    if (row) await ctx.db.patch(row._id, payload);
+    else await ctx.db.insert("payoutAccounts", payload);
+
+    // هیچ رقمی از اطلاعات بانکی در سوابق تغییرات یا پیام‌ها ثبت نمی‌شود
+    await audit(ctx, {
+      actorId: admin._id,
+      action: "update_payout_account",
+      entity: "payoutAccounts",
+      entityId: "platform",
+      summary: "به‌روزرسانی اطلاعات حساب مقصد کمیسیون (بدون ثبت ارقام)",
+    });
+    return { ok: true as const };
+  },
+});
+
+/** ───── تطبیق دفتر و گزارش مالی رانندگان ───── */
+
+/**
+ * تطبیق دفتر تراکنش‌ها با مانده کیف پول، کمیسیون پرداخت‌شده و پرداخت‌نشده.
+ * هر مغایرت با مبلغ دقیق گزارش می‌شود تا بدون تغییر سابقه قابل بررسی باشد.
+ */
+export const reconcile = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const wallets = await ctx.db.query("wallets").collect();
+    const rows = [];
+    for (const wallet of wallets) {
+      const txns = await ctx.db
+        .query("transactions")
+        .withIndex("by_wallet", (q) => q.eq("walletId", wallet._id))
+        .collect();
+      const driver = await ctx.db.get(wallet.driverId);
+      rows.push({
+        walletId: wallet._id,
+        driverName: driver?.name ?? driver?.phone ?? "راننده",
+        transactionCount: txns.length,
+        balance: wallet.balance,
+        commissionPaid: wallet.commissionPaid,
+        commissionUnpaid: wallet.commissionUnpaid,
+        ...reconcileWallet(txns, wallet),
+      });
+    }
+    return { rows, ok: rows.every((r) => r.ok) };
+  },
+});
+
+/** گزارش مالی یک راننده در بازهٔ زمانی دلخواه (فقط مدیر) */
+export const driverReport = query({
+  args: { driverId: v.id("users"), fromTs: v.number(), toTs: v.number() },
+  handler: async (ctx, { driverId, fromTs, toTs }) => {
+    await requireAdmin(ctx);
+    const driver = await ctx.db.get(driverId);
+    if (!driver) throw new Error("راننده یافت نشد.");
+    const wallet = await ctx.db
+      .query("wallets")
+      .withIndex("by_driver", (q) => q.eq("driverId", driverId))
+      .first();
+    const txns = wallet
+      ? await ctx.db
+          .query("transactions")
+          .withIndex("by_wallet", (q) => q.eq("walletId", wallet._id))
+          .collect()
+      : [];
+    const inRange = txns.filter((t) => t.createdAt >= fromTs && t.createdAt <= toTs);
+    const confirmed = inRange.filter((t) => t.status === "confirmed");
+    const sumType = (type: string) =>
+      confirmed.filter((t) => t.type === type).reduce((total, t) => total + t.amount, 0);
+
+    const trips = (
+      await ctx.db.query("trips").withIndex("by_driver", (q) => q.eq("driverId", driverId)).collect()
+    ).filter((t) => t.completedAt != null && t.completedAt >= fromTs && t.completedAt <= toTs);
+
+    const settlements = (
+      await ctx.db
+        .query("settlements")
+        .withIndex("by_driver", (q) => q.eq("driverId", driverId))
+        .collect()
+    ).filter((s) => s.createdAt >= fromTs && s.createdAt <= toTs);
+
+    return {
+      driverName: driver.name ?? driver.phone ?? "راننده",
+      wallet,
+      tripCount: trips.length,
+      collected: trips.reduce((sum, t) => sum + t.seatsBooked * t.pricePerPassenger, 0),
+      driverShare: trips.reduce((sum, t) => sum + t.driverShare, 0),
+      commission: trips.reduce((sum, t) => sum + t.commissionAmount, 0),
+      earnings: sumType("earning"),
+      commissionDeducted: -sumType("commission"),
+      commissionRegistered: inRange
+        .filter((t) => t.type === "commission_due")
+        .reduce((sum, t) => sum + t.amount, 0),
+      commissionPaidByDriver: -sumType("commission_payment"),
+      settlements: -sumType("settlement"),
+      deposits: sumType("deposit"),
+      withdrawals: -sumType("withdrawal"),
+      adjustments: sumType("adjustment"),
+      settlementCount: settlements.length,
+      transactionCount: inRange.length,
+    };
   },
 });

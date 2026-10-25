@@ -1,6 +1,7 @@
 import { MoneyStat, PageHeader } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
+import { paymentTrackingCode } from "@/convex/lib/ledger";
 import {
   faDate,
   faDigits,
@@ -12,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ArrowDownToLine,
+  CirclePlus,
   CreditCard,
   Loader2,
   ReceiptText,
@@ -55,6 +57,7 @@ export default function WalletPage() {
   const data = useQuery(api.wallet.summary);
   const payFromWallet = useMutation(api.wallet.payCommissionFromWallet);
   const payViaGateway = useMutation(api.wallet.payCommissionViaGateway);
+  const requestTopup = useMutation(api.wallet.requestTopup);
   const requestWithdrawal = useMutation(api.wallet.requestWithdrawal);
   const requestSettlement = useMutation(api.wallet.requestSettlement);
   const cancelSettlement = useMutation(api.wallet.cancelSettlement);
@@ -62,6 +65,7 @@ export default function WalletPage() {
   const adminExists = useQuery(api.settings.adminExists);
 
   const [amount, setAmount] = useState("");
+  const [topupAmount, setTopupAmount] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   if (data === undefined) {
@@ -81,6 +85,7 @@ export default function WalletPage() {
 
   const wallet = data.wallet;
   const parsed = Number(amount.replace(/[^\d]/g, ""));
+  const topupParsed = Number(topupAmount.replace(/[^\d]/g, ""));
 
   const run = async (label: string, fn: () => Promise<unknown>, ok?: string) => {
     setBusy(label);
@@ -89,6 +94,7 @@ export default function WalletPage() {
       if (result?.ok === false) notifyError(result.message ?? "عملیات انجام نشد.");
       else if (ok) notifySuccess(ok);
       setAmount("");
+      setTopupAmount("");
     } catch (error) {
       notifyError(error);
     } finally {
@@ -148,14 +154,24 @@ export default function WalletPage() {
 
       {data.settings.paymentProvider === "not_connected" && (
         <p className="alert-warn mt-4">
-          درگاه پرداخت اینترنتی متصل نیست؛ پرداخت آنلاین ثبت می‌شود اما تأیید نمی‌شود.
-          روش وصول کمیسیون را مدیر از پنل مدیریت تعیین می‌کند.
+          درگاه پرداخت اینترنتی متصل نیست؛ پرداخت آنلاین ثبت می‌شود اما تأیید نمی‌شود و موجودی
+          افزایش نمی‌یابد. روش وصول کمیسیون را مدیر از پنل مدیریت تعیین می‌کند.
+        </p>
+      )}
+
+      {data.acceptanceGate.blocked && (
+        <p className="alert-error mt-4">{data.acceptanceGate.reason}</p>
+      )}
+      {data.acceptanceGate.walletTopupRequired && !data.acceptanceGate.blocked && (
+        <p className="hint-fa mt-2">
+          برای پذیرش سفر باید حداقل {toman(data.acceptanceGate.minAcceptanceBalance)} موجودی
+          کیف پول داشته باشید.
         </p>
       )}
 
       {/* عملیات مالی */}
       {data.isDriver && wallet && (
-        <div className="mt-5 grid gap-3 lg:grid-cols-2">
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
           <div className="trip-row">
             <SectionTitle icon={<CreditCard className="size-4 text-brand-teal" />}>
               پرداخت کمیسیون
@@ -200,6 +216,37 @@ export default function WalletPage() {
                 درخواست تسویه دوره‌ای
               </Button>
             </div>
+          </div>
+
+          <div className="trip-row">
+            <SectionTitle icon={<CirclePlus className="size-4 text-brand-teal" />}>
+              افزایش اعتبار کیف پول
+            </SectionTitle>
+            <label className="label-fa mt-3">مبلغ شارژ (تومان)</label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min={10000}
+                className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="مثلاً ۵۰۰۰۰۰"
+                value={topupAmount}
+                onChange={(e) => setTopupAmount(e.target.value)}
+              />
+              <Button
+                className="cursor-pointer"
+                disabled={!topupParsed || topupParsed <= 0 || busy !== null}
+                onClick={() =>
+                  void run("topup", () => requestTopup({ amount: topupParsed }))
+                }
+              >
+                {busy === "topup" ? <Loader2 className="size-4 animate-spin" /> : null}
+                شارژ کیف پول
+              </Button>
+            </div>
+            <p className="hint-fa">
+              پرداخت اینترنتی فقط پس از اتصال درگاه تأیید می‌شود؛ تا آن زمان هیچ مبلغی به موجودی
+              افزوده نمی‌شود. واریز دستی نیز پس از تأیید مدیر اعمال می‌شود.
+            </p>
           </div>
 
           <div className="trip-row">
@@ -327,7 +374,16 @@ export default function WalletPage() {
             {data.payments.map((p) => (
               <li key={p._id} className="flex items-center justify-between rounded-lg border border-border/60 p-3">
                 <span>
-                  {toman(p.amount)} — {p.provider}
+                  {toman(p.amount)} — {p.kind === "topup" ? "شارژ کیف پول" : p.kind === "settlement" ? "تسویه" : "کمیسیون"}
+                  {" — "}
+                  {p.provider === "wallet"
+                    ? "از کیف پول"
+                    : p.provider === "gateway"
+                      ? "درگاه اینترنتی"
+                      : "واریز دستی"}
+                  <span className="mr-2 text-[11px] text-muted-foreground" dir="ltr">
+                    {paymentTrackingCode(p._id)}
+                  </span>
                 </span>
                 <span className="chip">
                   {p.status === "not_connected"

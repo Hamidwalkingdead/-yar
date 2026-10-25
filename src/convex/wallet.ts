@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { topupIdempotencyKey } from "./lib/ledger";
 import {
+  acceptanceBlockReason,
   audit,
   ensureSettings,
   ensureWallet,
@@ -67,7 +69,19 @@ export const summary = query({
         .collect()
     ).filter((t) => t.status === "completed").length;
 
+    // وضعیت محدودیت مالی پذیرش سفر (بدهی یا حداقل موجودی) — برای نمایش به راننده
+    const gateReason =
+      user.accountType === "driver" ? await acceptanceBlockReason(ctx, user._id, settings) : null;
+
     return {
+      acceptanceGate: {
+        walletTopupRequired: settings.walletTopupRequired,
+        minAcceptanceBalance: settings.minAcceptanceBalance,
+        autoCommissionEnabled: settings.autoCommissionEnabled,
+        debtHandling: settings.debtHandling,
+        blocked: gateReason !== null,
+        reason: gateReason,
+      },
       isDriver: user.accountType === "driver",
       driverStatus: user.driverStatus ?? null,
       wallet,
@@ -200,6 +214,70 @@ export const payCommissionFromWallet = mutation({
     });
 
     return { ok: true as const, amount: target };
+  },
+});
+
+/**
+ * شارژ کیف پول از طریق درگاه پرداخت (روش دوم — پیش از پذیرش سفر).
+ *
+ * درگاه پرداخت هنوز متصل نیست: درخواست «ثبت» می‌شود اما هرگز تأیید نمی‌شود و
+ * موجودی افزایش نمی‌یابد. پس از اتصال درگاه، همین mutation جای فراخوانی درگاه
+ * است و تأیید پرداخت فقط با بازگشت تأییدشدهٔ سرویس پرداخت انجام می‌شود.
+ *
+ * شناسه یکتا باعث می‌شود کلیک‌های تکراری در یک پنجره کوتاه رکورد جدید نسازند.
+ */
+export const requestTopup = mutation({
+  args: { amount: v.number() },
+  handler: async (ctx, { amount }) => {
+    const user = await requireUser(ctx);
+    if (user.accountType !== "driver") {
+      throw new Error("کیف پول فقط برای رانندگان فعال است.");
+    }
+    requireAmount(amount, "شارژ کیف پول");
+    const settings = await ensureSettings(ctx);
+    const wallet = await ensureWallet(ctx, user._id);
+    const now = Date.now();
+    const idempotencyKey = topupIdempotencyKey(wallet._id, amount, now);
+
+    const existing = await ctx.db
+      .query("payments")
+      .withIndex("by_idempotency", (q) => q.eq("idempotencyKey", idempotencyKey))
+      .first();
+    if (existing) {
+      return {
+        ok: false as const,
+        status: existing.status,
+        paymentId: existing._id,
+        message:
+          "این درخواست شارژ پیش‌تر ثبت شده است؛ تا تأیید درگاه، موجودی افزایش نمی‌یابد.",
+      };
+    }
+
+    const paymentId = await ctx.db.insert("payments", {
+      payerId: user._id,
+      kind: "topup",
+      amount,
+      provider: "gateway",
+      status: "not_connected",
+      idempotencyKey,
+      failureReason: `سرویس درگاه پرداخت متصل نیست (ارائه‌دهنده: ${settings.paymentProvider})`,
+      createdAt: now,
+    });
+    await audit(ctx, {
+      actorId: user._id,
+      action: "topup_gateway_attempt",
+      entity: "payments",
+      entityId: paymentId,
+      summary: `تلاش شارژ کیف پول ${amount.toLocaleString("fa-IR")} تومان — درگاه متصل نیست`,
+    });
+
+    return {
+      ok: false as const,
+      status: "not_connected" as const,
+      paymentId,
+      message:
+        "درگاه پرداخت اینترنتی متصل نیست؛ درخواست شارژ ثبت شد اما تأیید نشد و موجودی افزایش نیافت.",
+    };
   },
 });
 

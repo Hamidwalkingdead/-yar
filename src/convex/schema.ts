@@ -335,6 +335,16 @@ const schema = defineSchema(
       commissionBasis: v.union(v.literal("fare_total"), v.literal("driver_share")),
       commissionPayer: v.union(v.literal("driver"), v.literal("platform")),
       commissionMethod: commissionMethodValidator,
+      /** روش اول: کسر خودکار کمیسیون بلافاصله پس از پایان هر سفر */
+      autoCommissionEnabled: v.optional(v.boolean()),
+      /** روش دوم: الزام شارژ کیف پول پیش از پذیرش سفرهای جدید */
+      walletTopupRequired: v.optional(v.boolean()),
+      /** حداقل موجودی کیف پول برای پذیرش سفر (تومان) */
+      minAcceptanceBalance: v.optional(v.number()),
+      /** نحوه برخورد با بدهی کمیسیون: مسدود کردن یا ادامه پذیرش */
+      debtHandling: v.optional(
+        v.union(v.literal("block"), v.literal("allow")),
+      ),
       blockAcceptanceWhenInDebt: v.boolean(),
       requireSettlementBeforeWithdraw: v.boolean(),
       tripExpiryMinutes: v.number(),
@@ -343,6 +353,21 @@ const schema = defineSchema(
       paymentProvider: v.string(),
       /** منطقه زمانی نمایش تاریخ و ساعت */
       timezone: v.string(),
+      updatedAt: v.number(),
+      updatedBy: v.optional(v.id("users")),
+    }).index("by_key", ["key"]),
+
+    /**
+     * اطلاعات حساب مقصد دریافت کمیسیون — فقط از مسیر مدیریت قابل خواندن و تغییر.
+     * هیچ کوئری عمومی این سند را برنمی‌گرداند، در گزارش‌های راننده یا پیام‌های
+     * عمومی استفاده نمی‌شود و در سوابق تغییرات نیز ارقام آن ثبت نمی‌شود.
+     */
+    payoutAccounts: defineTable({
+      key: v.string(),
+      bankName: v.optional(v.string()),
+      accountHolder: v.optional(v.string()),
+      cardNumber: v.optional(v.string()),
+      note: v.optional(v.string()),
       updatedAt: v.number(),
       updatedBy: v.optional(v.id("users")),
     }).index("by_key", ["key"]),

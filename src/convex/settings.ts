@@ -91,6 +91,10 @@ export const update = mutation({
     commissionBasis: commissionBasisValidator,
     commissionPayer: commissionPayerValidator,
     commissionMethod: commissionMethodValidator,
+    autoCommissionEnabled: v.optional(v.boolean()),
+    walletTopupRequired: v.optional(v.boolean()),
+    minAcceptanceBalance: v.optional(v.number()),
+    debtHandling: v.optional(v.union(v.literal("block"), v.literal("allow"))),
     blockAcceptanceWhenInDebt: v.boolean(),
     requireSettlementBeforeWithdraw: v.boolean(),
     tripExpiryMinutes: v.number(),
@@ -111,6 +115,9 @@ export const update = mutation({
     if (args.commissionPercent < 0 || args.commissionPercent > 100) {
       throw new Error("درصد کمیسیون باید بین ۰ تا ۱۰۰ باشد.");
     }
+    if (args.minAcceptanceBalance !== undefined && args.minAcceptanceBalance < 0) {
+      throw new Error("حداقل موجودی نمی‌تواند منفی باشد.");
+    }
     if (args.nightStartHour < 0 || args.nightStartHour > 23) {
       throw new Error("ساعت شروع شب نامعتبر است.");
     }
@@ -122,7 +129,19 @@ export const update = mutation({
       .query("settings")
       .withIndex("by_key", (q) => q.eq("key", APP_SETTINGS_KEY))
       .first();
-    const patch = { ...args, updatedAt: Date.now(), updatedBy: admin._id };
+    // «نحوه برخورد با بدهی» مرجع است؛ فیلد قدیمی همراه آن هم‌سان می‌شود
+    const debtHandling =
+      args.debtHandling ?? (args.blockAcceptanceWhenInDebt ? "block" : "allow");
+    const patch = {
+      ...args,
+      autoCommissionEnabled: args.autoCommissionEnabled ?? true,
+      walletTopupRequired: args.walletTopupRequired ?? false,
+      minAcceptanceBalance: args.minAcceptanceBalance ?? 0,
+      debtHandling,
+      blockAcceptanceWhenInDebt: debtHandling === "block",
+      updatedAt: Date.now(),
+      updatedBy: admin._id,
+    };
     if (row) {
       await ctx.db.patch(row._id, patch);
     } else {

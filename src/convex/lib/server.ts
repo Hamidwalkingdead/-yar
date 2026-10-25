@@ -24,6 +24,14 @@ export interface SettingsLike {
   commissionBasis: "fare_total" | "driver_share";
   commissionPayer: "driver" | "platform";
   commissionMethod: "wallet" | "gateway" | "periodic" | "debt";
+  /** روش اول: کسر خودکار کمیسیون پس از هر سفر */
+  autoCommissionEnabled: boolean;
+  /** روش دوم: شارژ کیف پول پیش از پذیرش سفر */
+  walletTopupRequired: boolean;
+  /** حداقل موجودی کیف پول برای پذیرش سفر (تومان) */
+  minAcceptanceBalance: number;
+  /** نحوه برخورد با بدهی کمیسیون */
+  debtHandling: "block" | "allow";
   blockAcceptanceWhenInDebt: boolean;
   requireSettlementBeforeWithdraw: boolean;
   tripExpiryMinutes: number;
@@ -50,6 +58,10 @@ export const DEFAULT_SETTINGS: SettingsLike = {
   commissionBasis: "fare_total",
   commissionPayer: "driver",
   commissionMethod: "wallet",
+  autoCommissionEnabled: true,
+  walletTopupRequired: false,
+  minAcceptanceBalance: 0,
+  debtHandling: "block",
   blockAcceptanceWhenInDebt: true,
   requireSettlementBeforeWithdraw: true,
   tripExpiryMinutes: 0,
@@ -138,6 +150,36 @@ export async function ensureWallet(
   const created = await ctx.db.get(id);
   if (!created) throw new Error("ساخت کیف پول ناموفق بود.");
   return created;
+}
+
+/**
+ * قواعد مالی پذیرش سفر برای راننده (مشترک بین فهرست سفرها، پذیرش و پاسخ به درخواست):
+ * ۱) بدهی کمیسیون — طبق تنظیم «نحوه برخورد با بدهی».
+ * ۲) حداقل موجودی کیف پول — وقتی روش «شارژ کیف پول پیش از پذیرش» فعال باشد.
+ */
+export async function acceptanceBlockReason(
+  ctx: AnyCtx,
+  driverId: Id<"users">,
+  settings: SettingsLike,
+): Promise<string | null> {
+  const wallet = await ctx.db
+    .query("wallets")
+    .withIndex("by_driver", (q) => q.eq("driverId", driverId))
+    .first();
+
+  const blockOnDebt = settings.debtHandling === "block" || settings.blockAcceptanceWhenInDebt;
+  if (blockOnDebt && wallet && wallet.debt > 0) {
+    return `بدهی پرداخت‌نشده کمیسیون (${wallet.debt.toLocaleString("fa-IR")} تومان) دارید؛ تا تسویه، پذیرش سفر مسدود است.`;
+  }
+
+  if (settings.walletTopupRequired && settings.minAcceptanceBalance > 0) {
+    const balance = wallet?.balance ?? 0;
+    if (balance < settings.minAcceptanceBalance) {
+      return `برای پذیرش سفر باید کیف پول شما حداقل ${settings.minAcceptanceBalance.toLocaleString("fa-IR")} تومان موجودی داشته باشد؛ موجودی فعلی ${balance.toLocaleString("fa-IR")} تومان است.`;
+    }
+  }
+
+  return null;
 }
 
 /** اعلان درون برنامه‌ای */

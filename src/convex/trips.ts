@@ -1,8 +1,10 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
+import { settleTripInWallet, shouldAutoDeduct } from "./lib/ledger";
 import { computeCommission } from "./lib/pricing";
 import {
+  acceptanceBlockReason,
   audit,
   effectiveTripStatus,
   ensureSettings,
@@ -27,24 +29,13 @@ const sortValidator = v.union(
 
 const REQUESTABLE_STATUSES = ["open", "accepted"] as const;
 
+/** قواعد مالی پذیرش سفر — منطق مشترک در lib/server.ts */
 async function driverBlockReason(
   ctx: AnyCtx,
   driverId: Id<"users">,
   settings: SettingsLike,
 ): Promise<string | null> {
-  const wallet = await ctx.db
-    .query("wallets")
-    .withIndex("by_driver", (q) => q.eq("driverId", driverId))
-    .first();
-  if (
-    settings.blockAcceptanceWhenInDebt &&
-    wallet &&
-    wallet.debt > 0 &&
-    settings.commissionMethod !== "wallet"
-  ) {
-    return `بدهی پرداخت‌نشده کمیسیون (${wallet.debt.toLocaleString("fa-IR")} تومان) دارید؛ تا تسویه، پذیرش سفر مسدود است.`;
-  }
-  return null;
+  return acceptanceBlockReason(ctx, driverId, settings);
 }
 
 async function loadTrip(ctx: AnyCtx, tripId: Id<"trips">) {
@@ -685,6 +676,12 @@ export const respond = mutation({
       throw new Error("ظرفیت خودرو با این درخواست نقض می‌شود.");
     }
 
+    // وقتی مالک سفر راننده است، قواعد مالی پذیرش (بدهی/حداقل موجودی) اعمال می‌شود
+    if (trip.ownerRole === "driver") {
+      const blocked = await driverBlockReason(ctx, user._id, settings);
+      if (blocked) throw new Error(blocked);
+    }
+
     await ctx.db.patch(request._id, {
       status: "accepted",
       respondedAt: now,
@@ -926,6 +923,18 @@ export const completeTrip = mutation({
       const driverId = trip.driverId;
       const wallet = await ensureWallet(ctx, driverId);
 
+      const autoDeduct = shouldAutoDeduct({
+        commissionMethod: trip.commissionMethod,
+        autoCommissionEnabled: settings.autoCommissionEnabled,
+        walletTopupRequired: settings.walletTopupRequired,
+      });
+
+      const settlement = settleTripInWallet(wallet, {
+        collected,
+        chargedToDriver,
+        autoDeduct,
+      });
+
       await ctx.db.insert("transactions", {
         walletId: wallet._id,
         driverId,
@@ -938,92 +947,84 @@ export const completeTrip = mutation({
         createdAt: now,
       });
 
-      const nextBalance = wallet.balance + collected;
-      const patch: Partial<Doc<"wallets">> = {
-        balance: nextBalance,
-        grossEarnings: wallet.grossEarnings + collected,
-        netEarnings: wallet.netEarnings + Math.max(0, collected - chargedToDriver),
-        updatedAt: now,
-      };
+      // هر پرداخت فقط یک‌بار ثبت می‌شود: کلید یکتا + بررسی قبل از درج
+      const idempotencyKey = `commission:trip:${trip._id}`;
+      const existingPayment = await ctx.db
+        .query("payments")
+        .withIndex("by_idempotency", (q) => q.eq("idempotencyKey", idempotencyKey))
+        .first();
 
-      if (chargedToDriver > 0) {
-        const canSettle =
-          trip.commissionMethod === "wallet" && nextBalance >= chargedToDriver;
-
-        if (canSettle) {
-          patch.balance = nextBalance - chargedToDriver;
-          patch.commissionPaid = wallet.commissionPaid + chargedToDriver;
-          await ctx.db.insert("transactions", {
-            walletId: wallet._id,
-            driverId,
-            tripId: trip._id,
-            type: "commission",
-            amount: -chargedToDriver,
-            affectsBalance: true,
-            status: "confirmed",
-            description: `کمیسیون سفریار (${trip.commissionPercent}٪) از کیف پول کسر شد`,
-            createdAt: now,
-          });
+      if (settlement.outcome === "deducted") {
+        await ctx.db.insert("transactions", {
+          walletId: wallet._id,
+          driverId,
+          tripId: trip._id,
+          type: "commission",
+          amount: -settlement.charged,
+          affectsBalance: true,
+          status: "confirmed",
+          description: `کمیسیون سفریار (${trip.commissionPercent}٪) از کیف پول کسر شد`,
+          createdAt: now,
+        });
+        if (!existingPayment) {
           await ctx.db.insert("payments", {
             payerId: driverId,
             tripId: trip._id,
             kind: "commission",
-            amount: chargedToDriver,
+            amount: settlement.charged,
             provider: "wallet",
             status: "confirmed",
-            idempotencyKey: `commission:trip:${trip._id}`,
+            idempotencyKey,
             createdAt: now,
             confirmedAt: now,
           });
-        } else {
-          patch.commissionUnpaid = wallet.commissionUnpaid + chargedToDriver;
-          patch.debt = wallet.debt + chargedToDriver;
-          patch.status = "debt";
-          await ctx.db.insert("transactions", {
-            walletId: wallet._id,
-            driverId,
+        }
+      } else if (settlement.outcome === "registered_as_debt") {
+        await ctx.db.insert("transactions", {
+          walletId: wallet._id,
+          driverId,
+          tripId: trip._id,
+          type: "commission_due",
+          amount: settlement.charged,
+          affectsBalance: false,
+          status: "pending",
+          description: autoDeduct
+            ? "کمیسیون سفریار ثبت شد (موجودی کیف پول کافی نیست)"
+            : `کمیسیون سفریار ثبت شد (${trip.commissionMethod === "gateway" ? "پرداخت از طریق درگاه" : trip.commissionMethod === "periodic" ? "تسویه دوره‌ای" : "ثبت بدهی"})`,
+          createdAt: now,
+        });
+        if (!existingPayment) {
+          await ctx.db.insert("payments", {
+            payerId: driverId,
             tripId: trip._id,
-            type: "commission_due",
-            amount: chargedToDriver,
-            affectsBalance: false,
-            status: "pending",
-            description:
-              trip.commissionMethod === "wallet"
-                ? `کمیسیون سفریار ثبت شد (موجودی کیف پول کافی نیست)`
-                : `کمیسیون سفریار ثبت شد (${trip.commissionMethod === "gateway" ? "پرداخت از طریق درگاه" : trip.commissionMethod === "periodic" ? "تسویه دوره‌ای" : "ثبت بدهی"})`,
+            kind: "commission",
+            amount: settlement.charged,
+            provider: autoDeduct ? "wallet" : "manual",
+            status: autoDeduct ? "failed" : "pending",
+            idempotencyKey,
+            failureReason: autoDeduct
+              ? "موجودی کیف پول برای کسر کمیسیون کافی نیست"
+              : "کمیسیون به‌صورت بدهی ثبت شد و در تسویه وصول می‌شود",
             createdAt: now,
           });
-          if (trip.commissionMethod === "wallet") {
-            await ctx.db.insert("payments", {
-              payerId: driverId,
-              tripId: trip._id,
-              kind: "commission",
-              amount: chargedToDriver,
-              provider: "wallet",
-              status: "failed",
-              idempotencyKey: `commission:trip:${trip._id}`,
-              failureReason: "موجودی کیف پول برای کسر کمیسیون کافی نیست",
-              createdAt: now,
-            });
-          }
         }
       }
 
-      await ctx.db.patch(wallet._id, patch);
-      if (patch.status === "debt") {
+      await ctx.db.patch(wallet._id, { ...settlement.patch, updatedAt: now });
+      if (settlement.outcome === "registered_as_debt") {
         await notify(ctx, {
           userId: driverId,
           kind: "commission_due",
           title: "ثبت کمیسیون",
-          body: `${chargedToDriver.toLocaleString("fa-IR")} تومان کمیسیون برای این سفر ثبت شد.`,
+          body: `${settlement.charged.toLocaleString("fa-IR")} تومان کمیسیون برای این سفر ثبت شد و به بدهی شما افزوده شد.`,
           link: "/dashboard/wallet",
         });
-      } else if (chargedToDriver > 0) {
+      } else if (settlement.outcome === "deducted") {
         await notify(ctx, {
           userId: driverId,
           kind: "commission_paid",
           title: "کمیسیون کسر شد",
-          body: `${chargedToDriver.toLocaleString("fa-IR")} تومان کمیسیون از کیف پول شما کسر شد.`,
+          body: `${settlement.charged.toLocaleString("fa-IR")} تومان کمیسیون از کیف پول شما کسر شد.`,
           link: "/dashboard/wallet",
         });
       }

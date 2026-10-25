@@ -1,6 +1,8 @@
 import { PageHeader } from "@/components/AppShell";
+import { JalaliDateField } from "@/components/JalaliDateTime";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
 import {
   faDate,
@@ -76,7 +78,8 @@ export default function AdminPage() {
   const wallets = useQuery(api.admin.wallets, tab === "wallets" ? {} : "skip");
   const auditLog = useQuery(api.admin.auditLog, tab === "audit" ? {} : "skip");
   const settings = useQuery(api.settings.get, tab === "settings" ? {} : "skip");
-
+  const payout = useQuery(api.admin.payoutAccount, tab === "settings" ? {} : "skip");
+  const reconcileData = useQuery(api.admin.reconcile, tab === "wallets" ? {} : "skip");
   const reviewDocument = useMutation(api.admin.reviewDocument);
   const setDriverStatus = useMutation(api.admin.setDriverStatus);
   const setUserActive = useMutation(api.admin.setUserActive);
@@ -84,10 +87,24 @@ export default function AdminPage() {
   const markSettlementPaid = useMutation(api.admin.markSettlementPaid);
   const reviewWithdrawal = useMutation(api.admin.reviewWithdrawal);
   const updateSettings = useMutation(api.settings.update);
+  const savePayoutAccount = useMutation(api.admin.savePayoutAccount);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string> | null>(null);
+  const [toggles, setToggles] = useState<Record<string, boolean> | null>(null);
+  const [payoutForm, setPayoutForm] = useState<Record<string, string> | null>(null);
+  const [reportDriver, setReportDriver] = useState<Id<"users"> | null>(null);
+  const [reportFrom, setReportFrom] = useState<number | null>(null);
+  const [reportTo, setReportTo] = useState<number | null>(null);
   const { user, isLoading: authLoading } = useAuth();
+
+  // گزارش مالی راننده — پس از انتخاب راننده و بازهٔ شمسی
+  const report = useQuery(
+    api.admin.driverReport,
+    reportDriver && reportFrom !== null && reportTo !== null
+      ? { driverId: reportDriver, fromTs: reportFrom, toTs: reportTo + 86_400_000 }
+      : "skip",
+  );
 
   if (!authLoading && user?.role !== "admin") {
     return (
@@ -142,7 +159,11 @@ export default function AdminPage() {
           commissionBasis: settings.commissionBasis,
           commissionPayer: settings.commissionPayer,
           commissionMethod: settings.commissionMethod,
-          blockAcceptanceWhenInDebt: settings.blockAcceptanceWhenInDebt,
+          autoCommissionEnabled: autoCommission,
+          walletTopupRequired: walletTopup,
+          minAcceptanceBalance: num("minAcceptanceBalance"),
+          debtHandling: debtPolicy,
+          blockAcceptanceWhenInDebt: debtPolicy === "block",
           requireSettlementBeforeWithdraw: settings.requireSettlementBeforeWithdraw,
           tripExpiryMinutes: num("tripExpiryMinutes"),
           mapProvider: settings.mapProvider,
@@ -156,6 +177,37 @@ export default function AdminPage() {
 
   const formValue = (key: string, fallback: number | string) =>
     form?.[key] ?? String(fallback);
+
+  // مقادیر کلیدهای مستقل روش‌های وصول کمیسیون (تا ذخیره، در حالت محلی نگه داشته می‌شوند)
+  const autoCommission =
+    toggles?.autoCommissionEnabled ?? settings?.autoCommissionEnabled ?? true;
+  const walletTopup =
+    toggles?.walletTopupRequired ?? settings?.walletTopupRequired ?? false;
+  const debtPolicy: "block" | "allow" =
+    toggles?.debtBlock !== undefined
+      ? toggles.debtBlock
+        ? "block"
+        : "allow"
+      : (settings?.debtHandling ?? "block");
+
+  const payoutValue = (key: string) =>
+    payoutForm?.[key] ??
+    (payout as Record<string, string | undefined> | null)?.[key] ??
+    "";
+
+  const savePayout = async () => {
+    await run(
+      "payout",
+      () =>
+        savePayoutAccount({
+          bankName: payoutValue("bankName") || undefined,
+          accountHolder: payoutValue("accountHolder") || undefined,
+          cardNumber: payoutValue("cardNumber") || undefined,
+          note: payoutValue("note") || undefined,
+        }),
+      "اطلاعات حساب مقصد ذخیره شد.",
+    );
+  };
 
   return (
     <div className="mx-auto w-full max-w-5xl px-3 pt-5 sm:px-6 sm:pt-8">
@@ -505,6 +557,82 @@ export default function AdminPage() {
       )}
 
       {/* کیف پول‌ها */}
+      {/* تطبیق دفتر تراکنش‌ها با مانده کیف پول‌ها */}
+      {tab === "wallets" && reconcileData && (
+        <div className="trip-row mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-bold">تطبیق دفتر تراکنش‌ها</h3>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                مانده کیف پول، کمیسیون پرداخت‌شده و پرداخت‌نشده با دفتر رویدادها مقایسه می‌شود؛
+                مغایرت‌ها بدون تغییر سابقه گزارش می‌شوند.
+              </p>
+            </div>
+            <span
+              className={cn(
+                "chip",
+                reconcileData.ok
+                  ? "bg-brand-teal-soft text-brand-teal-deep"
+                  : "bg-destructive/10 text-destructive",
+              )}
+            >
+              {reconcileData.ok ? "همه کیف پول‌ها مطابقت دارند" : "مغایرت مالی یافت شد"}
+            </span>
+          </div>
+          {!reconcileData.ok && (
+            <ul className="mt-3 space-y-1 text-xs">
+              {reconcileData.rows
+                .filter((r) => !r.ok)
+                .map((r) => (
+                  <li
+                    key={r.walletId}
+                    className="rounded-lg border border-destructive/30 p-2 leading-6"
+                  >
+                    <span className="font-semibold">{r.driverName}</span> — اختلاف موجودی{" "}
+                    {toman(r.deltaBalance)}، اختلاف کمیسیون پرداخت‌شده {toman(r.deltaCommissionPaid)}،
+                    اختلاف بدهی {toman(r.deltaUnpaid)}
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* گزارش مالی یک راننده در بازهٔ شمسی */}
+      {tab === "wallets" && reportDriver && reportFrom !== null && reportTo !== null && (
+        <div className="trip-row mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-bold">
+              گزارش مالی راننده{report ? ` — ${report.driverName}` : ""}
+            </h3>
+            <Button
+              size="sm"
+              variant="outline"
+              className="cursor-pointer"
+              onClick={() => setReportDriver(null)}
+            >
+              بستن گزارش
+            </Button>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <JalaliDateField label="از تاریخ (شمسی)" value={reportFrom} onChange={setReportFrom} />
+            <JalaliDateField label="تا تاریخ (شمسی)" value={reportTo} onChange={setReportTo} />
+          </div>
+          {report && (
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <Stat label="سفرهای پایان‌یافته" value={faDigits(String(report.tripCount))} />
+              <Stat label="مبالغ وصولی از مسافران" value={toman(report.collected)} />
+              <Stat label="کمیسیون سفریار" value={toman(report.commission)} tone="text-brand-saffron-deep" />
+              <Stat label="سهم خالص راننده" value={toman(report.driverShare)} tone="text-brand-teal" />
+              <Stat label="کمیسیون کسرشده از کیف پول" value={toman(report.commissionDeducted)} />
+              <Stat label="کمیسیون ثبت‌شده به‌عنوان بدهی" value={toman(report.commissionRegistered)} />
+              <Stat label="پرداخت نقدی راننده" value={toman(report.commissionPaidByDriver)} />
+              <Stat label="تسویه‌های انجام‌شده" value={toman(report.settlements)} />
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === "wallets" && wallets && (
         <ul className="space-y-2">
           {wallets.rows.length === 0 && (
@@ -529,11 +657,24 @@ export default function AdminPage() {
                     <p className="mt-1 flex flex-wrap gap-1.5">
                       <span className="chip">موجودی {toman(wallet.balance)}</span>
                       <span className="chip">ناخالص {toman(wallet.grossEarnings)}</span>
+                      <span className="chip">کمیسیون پرداخت‌شده {toman(wallet.commissionPaid)}</span>
                       <span className="chip">کمیسیون پرداخت‌نشده {toman(wallet.commissionUnpaid)}</span>
                       <span className="chip">بدهی {toman(wallet.debt)}</span>
                       <span className="chip">برداشت {toman(wallet.totalWithdrawn)}</span>
                     </p>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="cursor-pointer"
+                    onClick={() => {
+                      setReportDriver(wallet.driverId);
+                      if (reportFrom === null) setReportFrom(Date.now() - 30 * 86_400_000);
+                      if (reportTo === null) setReportTo(Date.now());
+                    }}
+                  >
+                    گزارش مالی این راننده
+                  </Button>
                 </div>
                 {pending.length > 0 && (
                   <ul className="mt-3 space-y-2 border-t border-border/60 pt-3">
@@ -620,6 +761,149 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
+
+          {/* روش‌های مستقل وصول کمیسیون */}
+          <div className="mt-6 rounded-xl border border-border/70 p-4">
+            <h3 className="text-sm font-bold">روش‌های وصول کمیسیون</h3>
+            <p className="hint-fa">هر دو روش می‌توانند هم‌زمان فعال باشند.</p>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/60 p-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 size-4"
+                  checked={autoCommission}
+                  onChange={(e) =>
+                    setToggles({ ...(toggles ?? {}), autoCommissionEnabled: e.target.checked })
+                  }
+                />
+                <span>
+                  <span className="block text-sm font-bold">
+                    روش اول — کسر خودکار پس از هر سفر
+                  </span>
+                  <span className="mt-1 block text-xs leading-6 text-muted-foreground">
+                    پس از پایان سفر، کمیسیون محاسبه و از موجودی کیف پول کسر می‌شود؛ اگر موجودی
+                    کافی نباشد، مابه‌التفاوت به‌عنوان بدهی ثبت می‌شود.
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/60 p-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 size-4"
+                  checked={walletTopup}
+                  onChange={(e) =>
+                    setToggles({ ...(toggles ?? {}), walletTopupRequired: e.target.checked })
+                  }
+                />
+                <span>
+                  <span className="block text-sm font-bold">
+                    روش دوم — شارژ کیف پول پیش از پذیرش سفر
+                  </span>
+                  <span className="mt-1 block text-xs leading-6 text-muted-foreground">
+                    راننده برای پذیرش سفر باید حداقل موجودی تعیین‌شده را داشته باشد و کمیسیون
+                    سفرها از اعتبار کیف پول کسر شود.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="label-fa">حداقل موجودی برای پذیرش سفر (تومان)</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={formValue("minAcceptanceBalance", settings.minAcceptanceBalance ?? 0)}
+                  onChange={(e) => setForm({ ...(form ?? {}), minAcceptanceBalance: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label-fa">نحوه برخورد با بدهی کمیسیون</label>
+                <select
+                  dir="rtl"
+                  className="h-9 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={debtPolicy}
+                  onChange={(e) =>
+                    setToggles({
+                      ...(toggles ?? {}),
+                      debtBlock: e.target.value === "block",
+                    })
+                  }
+                >
+                  <option value="block">مسدود کردن پذیرش سفر تا تسویه بدهی</option>
+                  <option value="allow">ادامه پذیرش سفر با وجود بدهی</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* حساب مقصد کمیسیون — فقط در همین بخش مدیریت */}
+          <div className="mt-6 rounded-xl border border-border/70 p-4">
+            <h3 className="text-sm font-bold">حساب مقصد دریافت کمیسیون</h3>
+            <p className="hint-fa">
+              این اطلاعات فقط در این بخش امن نگهداری می‌شود، هرگز به رانندگان یا گزارش‌های
+              عمومی نمایش داده نمی‌شود و ارقام آن در سوابق تغییرات ثبت نمی‌شود.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="label-fa">نام بانک</label>
+                <input
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={payoutValue("bankName")}
+                  onChange={(e) => setPayoutForm({ ...(payoutForm ?? {}), bankName: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label-fa">به نام</label>
+                <input
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={payoutValue("accountHolder")}
+                  onChange={(e) =>
+                    setPayoutForm({ ...(payoutForm ?? {}), accountHolder: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="label-fa">شماره کارت (اختیاری)</label>
+                <input
+                  dir="ltr"
+                  inputMode="numeric"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={payoutValue("cardNumber")}
+                  onChange={(e) =>
+                    setPayoutForm({ ...(payoutForm ?? {}), cardNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="label-fa">توضیح (اختیاری)</label>
+                <input
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={payoutValue("note")}
+                  onChange={(e) => setPayoutForm({ ...(payoutForm ?? {}), note: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button
+                className="cursor-pointer"
+                disabled={busy !== null}
+                onClick={() => void savePayout()}
+              >
+                {busy === "payout" ? "در حال ذخیره…" : "ذخیره اطلاعات حساب مقصد"}
+              </Button>
+              {settings.paymentProvider === "not_connected" && (
+                <p className="text-xs text-muted-foreground">
+                  درگاه پرداخت متصل نیست؛ تا زمان اتصال، دریافت واقعی وجه فقط از مسیر «واریز
+                  دستی پس از تأیید مدیر» انجام می‌شود.
+                </p>
+              )}
+            </div>
+          </div>
+
           <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span>روش وصول: {settings.commissionMethod}</span>
             <span>مبنا: {settings.commissionBasis}</span>
