@@ -23,14 +23,14 @@ import { Navigate, useLocation, useNavigate } from "react-router";
  */
 export function RequireAuth({
   children,
-  title = "Sign in to continue",
-  description = "This page is only available to signed-in users.",
+  title = "برای ادامه وارد شوید",
+  description = "این صفحه فقط برای کاربران واردشده در دسترس است.",
   redirectImmediately = false,
 }: {
   children: ReactNode;
-  /** Headline on the blocked screen. */
+  /** عنوان صفحهِٔ مسدودکننده */
   title?: string;
-  /** Says what the visitor gets by signing in. */
+  /** توضیح صفحهِٔ مسدودکننده */
   description?: string;
   /** Skip the explanation and go straight to `/auth`. */
   redirectImmediately?: boolean;
@@ -67,19 +67,19 @@ export function RequireAuth({
             <CardTitle className="text-xl">{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </CardHeader>
-          <CardContent className="text-center text-sm text-muted-foreground">
-            You'll come straight back to this page once you're signed in.
+          <CardContent className="text-center text-sm leading-7 text-muted-foreground">
+            پس از ورود، مستقیماً به همین صفحه برمی‌گردید.
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
-            <Button className="w-full" onClick={() => navigate(signInHref)}>
-              Sign in
+            <Button className="w-full cursor-pointer" onClick={() => navigate(signInHref)}>
+              ورود
             </Button>
             <Button
               variant="ghost"
-              className="w-full"
+              className="w-full cursor-pointer"
               onClick={() => navigate("/")}
             >
-              Back to home
+              بازگشت به صفحه اصلی
             </Button>
           </CardFooter>
         </Card>

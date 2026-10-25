@@ -125,7 +125,16 @@ export function AppShell() {
   const location = useLocation();
   const onboarding = useMutation(api.profile.onboarding);
   const [name, setName] = useState("");
-  const [role, setRole] = useState<"passenger" | "driver">("passenger");
+  const [role, setRole] = useState<"passenger" | "driver">(() => {
+    // نقشی که کاربر پیش از ورود انتخاب کرده پیش‌فرض همین دروازه است
+    try {
+      return sessionStorage.getItem("safaryar:role") === "driver"
+        ? "driver"
+        : "passenger";
+    } catch {
+      return "passenger";
+    }
+  });
   const [saving, setSaving] = useState(false);
   const [onboardError, setOnboardError] = useState<string | null>(null);
 
@@ -137,7 +146,11 @@ export function AppShell() {
     setOnboardError(null);
     try {
       await onboarding({ accountType: role, name: name.trim() });
-      setRole(role);
+      try {
+        sessionStorage.removeItem("safaryar:role");
+      } catch {
+        // بدون حافظهٔ session هم جریان عادی ادامه پیدا می‌کند
+      }
     } catch (err) {
       setOnboardError(err instanceof Error ? err.message : "ثبت اطلاعات ممکن نشد.");
     } finally {

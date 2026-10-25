@@ -119,6 +119,13 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       formData.set("phone", step.phone);
       formData.set("code", otp);
       await signIn("phone-otp", formData);
+      // نقش انتخاب‌شده در این صفحه به دروازه تکمیل پروفایل منتقل می‌شود
+      // تا کاربر دوباره مجبور به انتخاب نشود.
+      try {
+        sessionStorage.setItem("safaryar:role", role);
+      } catch {
+        // حافظه در دسترس نیست — دروازه بعداً خودش نقش را می‌پرسد
+      }
       navigate(redirect);
     } catch (err) {
       console.error("OTP verification error:", err);
