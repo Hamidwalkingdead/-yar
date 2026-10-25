@@ -1,5 +1,7 @@
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { cn } from "@/lib/utils";
+import { MousePointerClick } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 export type MapPoint = { lat: number; lng: number; label?: string };
@@ -13,6 +15,8 @@ type Props = {
   height?: number;
   /** امکان انتخاب نقطه روی نقشه با کلیک */
   onPick?: (point: { lat: number; lng: number }) => void;
+  /** حالت انتخاب: نشانگر و راهنمای کلیک نمایش داده می‌شود */
+  picking?: boolean;
 };
 
 function markerIcon(kind: "origin" | "destination") {
@@ -38,8 +42,15 @@ export function RouteMap({
   className,
   height = 280,
   onPick,
+  picking = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // رویداد کلیک یک‌بار نصب می‌شود؛ این مرجع جدیدترین تابع را نگه می‌دارد
+  // تا فعال/غیرفعال شدن حالت انتخاب نیازی به نصب دوباره نداشته باشد.
+  const onPickRef = useRef(onPick);
+  useEffect(() => {
+    onPickRef.current = onPick;
+  });
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
@@ -58,11 +69,9 @@ export function RouteMap({
     layerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
-    if (onPick) {
-      map.on("click", (e: L.LeafletMouseEvent) => {
-        onPick({ lat: e.latlng.lat, lng: e.latlng.lng });
-      });
-    }
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      onPickRef.current?.({ lat: e.latlng.lat, lng: e.latlng.lng });
+    });
 
     const observer = new ResizeObserver(() => map.invalidateSize());
     observer.observe(containerRef.current);
@@ -123,5 +132,20 @@ export function RouteMap({
     }).addTo(layer);
   }, [route]);
 
-  return <div ref={containerRef} className={className} style={{ height }} dir="ltr" />;
+  return (
+    <div className={cn("relative", className)}>
+      <div
+        ref={containerRef}
+        className={cn(picking && "cursor-crosshair")}
+        style={{ height }}
+        dir="ltr"
+      />
+      {picking && (
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-[1000] mx-auto flex w-fit items-center gap-1.5 rounded-full bg-background/95 px-3 py-1.5 text-xs font-bold text-brand-teal-deep shadow-md">
+          <MousePointerClick className="size-3.5" />
+          برای انتخاب این نقطه، روی نقشه کلیک کنید
+        </div>
+      )}
+    </div>
+  );
 }

@@ -1,16 +1,17 @@
 import { PageHeader } from "@/components/AppShell";
+import { JalaliDateTime } from "@/components/JalaliDateTime";
 import { RouteMap, type MapPoint } from "@/components/RouteMap";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { QuoteResult } from "@/convex/lib/quote";
 import { useAuth } from "@/hooks/use-auth";
 import {
+  faDate,
   faDigits,
   faKm,
-  localInputValue,
+  faTime,
   notifyError,
   notifySuccess,
-  parseLocalInput,
   toman,
 } from "@/lib/fa";
 import { cn } from "@/lib/utils";
@@ -18,8 +19,10 @@ import {
   ArrowLeft,
   Calculator,
   Clock,
+  LocateFixed,
   Loader2,
   MapPin,
+  MapPinned,
   Route,
   Search,
   TriangleAlert,
@@ -35,17 +38,94 @@ function PlacePicker({
   placeholder,
   value,
   onChange,
+  picking,
+  onPickToggle,
 }: {
   label: string;
   placeholder: string;
   value: Place | null;
   onChange: (place: Place | null) => void;
+  /** این مبدأ/مقصد در حال انتخاب از روی نقشه است */
+  picking: boolean;
+  onPickToggle: () => void;
 }) {
   const searchAddress = useAction(api.routing.searchAddress);
+  const reverseLookup = useAction(api.routing.reverseLookup);
   const [text, setText] = useState("");
   const [results, setResults] = useState<Place[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
+
+  /** پر کردن خودکار محل با لوکیشن دستگاه + آدرس‌یابی معکوس */
+  const locateMe = () => {
+    if (locating) return;
+    setWarning(null);
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setWarning("دستگاه شما موقعیت مکانی را پشتیبانی نمی‌کند؛ از جست‌وجوی آدرس یا نقشه استفاده کنید.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const fallback = `موقعیت فعلی (${lat.toFixed(4)}، ${lng.toFixed(4)})`;
+        let placeLabel = fallback;
+        try {
+          const res = await reverseLookup({ lat, lng });
+          if (res.result?.label) placeLabel = res.result.label;
+        } catch {
+          // آدرس‌یابی معکوس در دسترس نیست؛ مختصات خام ثبت می‌شود
+        }
+        onChange({ label: placeLabel, lat, lng });
+        setLocating(false);
+      },
+      (err) => {
+        setLocating(false);
+        setWarning(
+          err.code === err.PERMISSION_DENIED
+            ? "دسترسی به موقعیت مکانی رد شد؛ می‌توانید آدرس را جست‌وجو کنید یا از نقشه انتخاب کنید."
+            : "موقعیت مکانی در دسترس نیست؛ دوباره تلاش کنید یا از نقشه انتخاب کنید.",
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60_000 },
+    );
+  };
+
+  const actionButtons = (
+    <div className="mt-2 grid grid-cols-2 gap-2">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="cursor-pointer gap-1"
+        disabled={locating}
+        onClick={locateMe}
+      >
+        {locating ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <LocateFixed className="size-4" />
+        )}
+        {locating ? "در حال یافتن…" : "محل فعلی من"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        aria-pressed={picking}
+        className={cn(
+          "cursor-pointer gap-1",
+          picking && "border-brand-teal bg-brand-teal-soft text-brand-teal-deep",
+        )}
+        onClick={onPickToggle}
+      >
+        <MapPinned className="size-4" />
+        {picking ? "روی نقشه کلیک کنید" : "انتخاب از نقشه"}
+      </Button>
+    </div>
+  );
 
   const run = async () => {
     if (text.trim().length < 3 || busy) return;
@@ -90,6 +170,7 @@ function PlacePicker({
             تغییر
           </button>
         </div>
+        {actionButtons}
       </div>
     );
   }
@@ -122,6 +203,7 @@ function PlacePicker({
           جست‌وجو
         </Button>
       </div>
+      {actionButtons}
       {warning && <p className="hint-fa">{warning}</p>}
       {results && results.length > 0 && (
         <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
@@ -225,6 +307,7 @@ export default function TripCreatePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const quoteAction = useAction(api.routing.quote);
+  const reverseLookup = useAction(api.routing.reverseLookup);
   const createTrip = useAction(api.tripActions.create);
 
   const ownerRole: "passenger" | "driver" = user?.accountType === "driver" ? "driver" : "passenger";
@@ -232,7 +315,12 @@ export default function TripCreatePage() {
 
   const [origin, setOrigin] = useState<Place | null>(null);
   const [destination, setDestination] = useState<Place | null>(null);
-  const [departureLocal, setDepartureLocal] = useState(() => localInputValue(Date.now() + 3600_000));
+  const [departureAt, setDepartureAt] = useState(() => {
+    // گرد کردن به نزدیک‌ترین ۵ دقیقه تا گام‌های انتخاب‌گر ساعت هم‌خوان بمانند
+    const target = Date.now() + 3600_000;
+    return Math.floor(target / 300_000) * 300_000;
+  });
+  const [picking, setPicking] = useState<"origin" | "destination" | null>(null);
   const [seats, setSeats] = useState(isDriver ? 2 : 1);
   const [note, setNote] = useState("");
   const [quote, setQuote] = useState<QuoteResult | null>(null);
@@ -240,8 +328,26 @@ export default function TripCreatePage() {
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const departureAt = parseLocalInput(departureLocal) ?? Date.now();
   const canQuote = !!origin && !!destination;
+
+  /** انتخاب مبدأ/مقصد با کلیک روی نقشه + آدرس‌یابی معکوس برای برچسب */
+  const applyPickedPoint = async (
+    target: "origin" | "destination",
+    point: { lat: number; lng: number },
+  ) => {
+    setPicking(null);
+    let label = `نقطه انتخابی روی نقشه (${point.lat.toFixed(4)}، ${point.lng.toFixed(4)})`;
+    try {
+      const res = await reverseLookup(point);
+      if (res.result?.label) label = res.result.label;
+    } catch {
+      // آدرس‌یابی معکوس در دسترس نیست؛ با همان مختصات ثبت می‌شود
+    }
+    const place: Place = { label, lat: point.lat, lng: point.lng };
+    if (target === "origin") setOrigin(place);
+    else setDestination(place);
+    setQuote(null);
+  };
 
   const calcQuote = async () => {
     if (!origin || !destination || quoting) return;
@@ -311,8 +417,11 @@ export default function TripCreatePage() {
             label="مبدأ سفر"
             placeholder="مثلاً تهران، میدان آزادی"
             value={origin}
+            picking={picking === "origin"}
+            onPickToggle={() => setPicking((p) => (p === "origin" ? null : "origin"))}
             onChange={(p) => {
               setOrigin(p);
+              setPicking(null);
               setQuote(null);
             }}
           />
@@ -320,25 +429,25 @@ export default function TripCreatePage() {
             label="مقصد سفر"
             placeholder="مثلاً اصفهان، میدان نقش‌جهان"
             value={destination}
+            picking={picking === "destination"}
+            onPickToggle={() => setPicking((p) => (p === "destination" ? null : "destination"))}
             onChange={(p) => {
               setDestination(p);
+              setPicking(null);
               setQuote(null);
             }}
           />
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="label-fa">زمان حرکت</label>
-              <input
-                type="datetime-local"
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={departureLocal}
-                onChange={(e) => {
-                  setDepartureLocal(e.target.value);
+              <JalaliDateTime
+                label="زمان حرکت"
+                value={departureAt}
+                onChange={(ts) => {
+                  setDepartureAt(ts);
                   setQuote(null);
                 }}
               />
-              <p className="hint-fa">بر اساس منطقه زمانی تهران</p>
             </div>
             <div>
               <label className="label-fa">
@@ -402,6 +511,10 @@ export default function TripCreatePage() {
               destination={mapDestination}
               route={quote?.route}
               height={300}
+              picking={picking !== null}
+              onPick={(point) => {
+                if (picking) void applyPickedPoint(picking, point);
+              }}
             />
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
@@ -419,7 +532,7 @@ export default function TripCreatePage() {
             </span>
             <span className="inline-flex items-center gap-1">
               <Clock className="size-3.5" />
-              {faDigits(new Date(departureAt).toLocaleDateString("fa-IR"))}
+              {faDate(departureAt)} ساعت {faTime(departureAt)}
             </span>
           </div>
           <p className="hint-fa">
